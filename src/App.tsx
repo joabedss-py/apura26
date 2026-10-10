@@ -16,6 +16,7 @@ const ROUND_TWO_LOCAL_POLL_MS = 30_000;
 const ROUND_TWO_CITIES_POLL_MS = 180_000;
 const MUNICIPALITY_REQUEST_WORKERS = 32;
 const MUNICIPALITY_PROGRESS_BATCH = 50;
+const STATE_DRILLDOWN_GUARD_MS = 650;
 
 function formatInteger(value?: number | null): string {
   return value === null || value === undefined ? '—' : new Intl.NumberFormat('pt-BR').format(value);
@@ -257,6 +258,7 @@ export default function App() {
   const [simulationActive, setSimulationActive] = useState(false);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
   const [mapFullscreen, setMapFullscreen] = useState(false);
+  const [lastStateSelectionAt, setLastStateSelectionAt] = useState(0);
 
   useEffect(() => {
     if (!mapFullscreen) return;
@@ -594,6 +596,7 @@ export default function App() {
     if (!selectedUF && !showAllMunicipalities) {
       const unit = unitFromFeature(feature);
       if (unit) {
+        setLastStateSelectionAt(Date.now());
         setSimulationActive(false);
         setSelectedCandidateId(null);
         setOfficeCode('1');
@@ -605,6 +608,7 @@ export default function App() {
       return;
     }
     const ibgeCode = getIbgeAreaCode(feature).padStart(7, '0');
+    if (Date.now() - lastStateSelectionAt < STATE_DRILLDOWN_GUARD_MS || selectedMunicipality?.ibgeCode === ibgeCode) return;
     let reference = municipalityByIbge.get(ibgeCode);
     if (!reference) {
       try {
@@ -624,7 +628,7 @@ export default function App() {
       setShowAllMunicipalities(false);
       clearCurrentResult();
     }
-  }, [clearCurrentResult, municipalityByIbge, selectedUF, showAllMunicipalities, round]);
+  }, [clearCurrentResult, lastStateSelectionAt, municipalityByIbge, selectedMunicipality, selectedUF, showAllMunicipalities, round]);
 
   const refresh = () => {
     if (round === '2' && !roundTwoStarted) return;
@@ -815,6 +819,7 @@ export default function App() {
                   <select id="map-uf-select" value="" onChange={(event) => {
                     const uf = event.target.value;
                     if (!uf) return;
+                    setLastStateSelectionAt(Date.now());
                     setSimulationActive(false);
                     setSelectedCandidateId(null);
                     setOfficeCode('1');
@@ -851,6 +856,7 @@ export default function App() {
                   selectedKey={selectedUF && selectedMunicipality ? selectedMunicipality.ibgeCode : undefined}
                   onSelect={handleMapSelect}
                   onSelectUF={(uf) => {
+                    setLastStateSelectionAt(Date.now());
                     setSimulationActive(false);
                     setSelectedCandidateId(null);
                     setOfficeCode('1');

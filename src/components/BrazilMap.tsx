@@ -227,6 +227,7 @@ const MapFeature = memo(function MapFeature({
         vectorEffect="non-scaling-stroke"
         tabIndex={0}
         role="button"
+        aria-pressed={selected}
         aria-label={label}
         onClick={() => onSelect(feature.source)}
         onKeyDown={(event) => {
@@ -525,9 +526,10 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
                 key={`uf-label-${unit.uf}`}
                 className={`map-uf-label${selectedUF && !isCurrent ? ' is-muted' : ''}${isCurrent ? ' is-current' : ''}`}
                 transform={`translate(${unit.centerX + offsetX} ${unit.centerY + offsetY}) scale(${1 / renderedView.scale})`}
-                role={canSelect ? 'button' : undefined}
-                tabIndex={canSelect ? 0 : -1}
-                aria-label={canSelect ? `${unit.uf}, ${unit.name}. Ver votação nominal desta UF.` : undefined}
+        role={canSelect ? 'button' : undefined}
+        tabIndex={canSelect ? 0 : -1}
+        aria-pressed={canSelect ? isCurrent : undefined}
+        aria-label={canSelect ? `${unit.uf}, ${unit.name}. Ver votação nominal desta UF.` : undefined}
                 pointerEvents={canSelect ? 'auto' : 'none'}
                 onPointerDown={canSelect ? (event) => event.stopPropagation() : undefined}
                 onClick={canSelect ? (event) => { event.stopPropagation(); onSelectUF?.(unit.uf); } : undefined}
