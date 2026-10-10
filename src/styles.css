@@ -149,6 +149,11 @@ main { max-width: 1510px; margin: 0 auto; padding: 0 clamp(20px, 4vw, 66px) 44px
 .candidate-heading > span { color: #70877a; font-family: var(--mono); font-size: 8px; }
 .candidate-list { flex: 1; overflow: auto; max-height: 360px; scrollbar-width: thin; scrollbar-color: #496457 transparent; }
 .candidate-row { min-height: 58px; display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 8px 1px; border-bottom: 1px solid rgba(177, 205, 190, .075); }
+.candidate-row--selectable { width: 100%; border-top: 0; border-right: 0; border-left: 2px solid transparent; color: inherit; background: transparent; font: inherit; text-align: left; cursor: pointer; transition: background .15s ease, border-color .15s ease; }
+.candidate-row--selectable:hover:not(:disabled), .candidate-row--focused { background: rgba(83, 224, 161, .075); }
+.candidate-row--selectable:focus-visible { outline: 1px solid var(--mint); outline-offset: -2px; }
+.candidate-row--selectable:disabled { cursor: default; opacity: .6; }
+.candidate-row--focused .candidate-name-line strong { color: #f4faf6; }
 .candidate-rank { color: #6e8478; font-family: var(--mono); font-size: 9px; }
 .candidate-row--leader .candidate-rank { color: var(--mint); }
 .candidate-main { min-width: 0; }
@@ -301,6 +306,7 @@ main { max-width: 1510px; margin: 0 auto; padding: 0 clamp(20px, 4vw, 66px) 44px
 .map-zoom-level { min-width: 37px; color: #82988c; font-family: var(--mono); font-size: 8px; text-align: center; font-variant-numeric: tabular-nums; }
 .map-feature-group { outline: none; }
 .map-feature { -webkit-tap-highlight-color: transparent; }
+.map-feature.is-dimmed { transition: fill-opacity .18s ease; }
 .map-feature:focus-visible { outline: none; }
 .map-selection { z-index: 1; max-width: min(76%, 300px); }
 .map-legend { min-width: 0; }
@@ -444,7 +450,13 @@ main { max-width: 1510px; margin: 0 auto; padding: 0 clamp(20px, 4vw, 66px) 44px
 
 /* Camada legível de UFs e controles diretos do mapa */
 .map-uf-boundary { fill: none; stroke: rgba(226, 246, 234, .68); stroke-width: 1.25px; stroke-linejoin: round; }
+.map-uf-context { fill: #07140e; stroke: none; }
+.map-uf-context.is-focus { fill: rgba(83, 224, 161, .07); }
+.map-uf-boundary.is-dimmed { stroke: rgba(226, 246, 234, .16); }
+.map-uf-boundary.is-focus { stroke: rgba(83, 224, 161, .82); stroke-width: 1.55px; }
 .map-uf-label { cursor: pointer; outline: none; }
+.map-uf-label.is-muted { opacity: .42; }
+.map-uf-label.is-current { cursor: default; }
 .map-uf-label rect { fill: rgba(8, 24, 18, .87); stroke: rgba(211, 235, 220, .5); stroke-width: 1px; transition: fill .16s ease, stroke .16s ease, filter .16s ease; }
 .map-uf-label text { fill: #f1faf4; font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .02em; pointer-events: none; }
 .map-uf-label:hover rect, .map-uf-label:focus-visible rect { fill: #174a35; stroke: var(--mint); filter: drop-shadow(0 0 4px rgba(83, 224, 161, .45)); }

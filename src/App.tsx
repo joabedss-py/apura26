@@ -79,7 +79,12 @@ function EmptyResults({
   return <div className="empty-state"><div className="empty-icon"><Clock3 size={19} /></div><p className="eyebrow">SEM RESULTADO PUBLICADO</p><h3>O TSE ainda não disponibilizou esta consulta</h3><p>{message || 'Este painel não preenche lacunas com dados ilustrativos. Consulte novamente ou abra a fonte oficial.'}</p></div>;
 }
 
-function CandidateList({ result, waitingForCount = false }: { result: ElectionResult; waitingForCount?: boolean }) {
+function CandidateList({ result, waitingForCount = false, selectedCandidateId, onSelectCandidate }: {
+  result: ElectionResult;
+  waitingForCount?: boolean;
+  selectedCandidateId: string | null;
+  onSelectCandidate: (candidate: ElectionCandidate) => void;
+}) {
   if (!result.candidates.length) {
     return <div className="empty-state empty-state--compact"><div className="empty-icon"><Info size={18} /></div><h3>Sem candidaturas publicadas neste arquivo</h3><p>Consulte novamente após a próxima atualização oficial.</p></div>;
   }
@@ -88,8 +93,18 @@ function CandidateList({ result, waitingForCount = false }: { result: ElectionRe
     <div className="candidate-list">
       {result.candidates.map((candidate, index) => {
         const color = getCandidateColor(candidate);
+        const focused = selectedCandidateId === candidate.id;
         return (
-          <article className={`candidate-row${index === 0 ? ' candidate-row--leader' : ''}`} key={candidate.id}>
+          <button
+            type="button"
+            className={`candidate-row candidate-row--selectable${index === 0 ? ' candidate-row--leader' : ''}${focused ? ' candidate-row--focused' : ''}`}
+            key={candidate.id}
+            onClick={() => onSelectCandidate(candidate)}
+            aria-pressed={focused}
+            disabled={waitingForCount}
+            title={`Focar o mapa nas áreas onde ${candidate.ballotName} lidera`}
+            style={{ borderLeftColor: focused ? color : 'transparent' }}
+          >
             <div className="candidate-rank" style={{ color }}>{String(index + 1).padStart(2, '0')}</div>
             <div className="candidate-main">
               <div className="candidate-name-line"><span className="candidate-color-dot" style={{ backgroundColor: color }} aria-hidden="true" /><strong>{candidate.ballotName}</strong><span className="party-tag">{candidate.party || `Nº ${candidate.number}`}</span></div>
@@ -97,7 +112,7 @@ function CandidateList({ result, waitingForCount = false }: { result: ElectionRe
               <div className="candidate-foot"><span className="candidate-votes">{waitingForCount ? 'Aguardando apuração' : `${formatInteger(candidate.votes)} votos`}</span><span className="candidate-status">{candidate.status || 'Candidatura'}</span></div>
             </div>
             <div className="candidate-percent" style={{ color }}>{waitingForCount ? '—' : formatPercent(candidate.percent)}</div>
-          </article>
+          </button>
         );
       })}
     </div>
@@ -117,6 +132,8 @@ function SummaryPanel({
   selectedMunicipality,
   leaders,
   leadersLoading,
+  selectedCandidateId,
+  onSelectCandidate,
   onBack,
   onRefresh,
   refreshing,
@@ -133,6 +150,8 @@ function SummaryPanel({
   selectedMunicipality: MunicipalityRef | null;
   leaders: Map<string, ElectionCandidate>;
   leadersLoading: boolean;
+  selectedCandidateId: string | null;
+  onSelectCandidate: (candidate: ElectionCandidate) => void;
   onBack: () => void;
   onRefresh: () => void;
   refreshing: boolean;
@@ -161,8 +180,8 @@ function SummaryPanel({
             <div className="stat-card"><span>Seções apuradas</span><strong>{formatInteger(result.countedSections)} <small>/ {formatInteger(result.totalSections)}</small></strong><div className="stat-progress"><span style={{ width: `${Math.max(0, Math.min(100, result.countedPercent ?? 0))}%` }} /></div><em>{formatPercent(result.countedPercent)} totalizado</em></div>
             <div className="stat-card"><span>Comparecimento</span><strong>{formatPercent(result.turnout)}</strong><em>Abstenção {formatPercent(result.abstention)}</em></div>
           </div>}
-          <div className="candidate-heading"><h3>Votação nominal</h3><span>{result.candidates.length} candidaturas</span></div>
-          <CandidateList result={result} waitingForCount={waitingForCount} />
+          <div className="candidate-heading"><h3>Votação nominal</h3><span>{result.candidates.length} candidaturas · clique para focar</span></div>
+          <CandidateList result={result} waitingForCount={waitingForCount} selectedCandidateId={selectedCandidateId} onSelectCandidate={onSelectCandidate} />
           {!waitingForCount && result.validVotes !== null && <div className="valid-votes"><span>Votos válidos</span><strong>{formatInteger(result.validVotes)}</strong></div>}
         </>
       ) : round === '2' && !roundTwoStarted ? (
@@ -228,7 +247,7 @@ export default function App() {
   const [municipalityIndexError, setMunicipalityIndexError] = useState('');
   const [municipalityIndexRetryKey, setMunicipalityIndexRetryKey] = useState(0);
   const [leaders, setLeaders] = useState<Map<string, ElectionCandidate[]>>(new Map());
-  const [leadersLoading, setLeadersLoading] = useState(false);
+  const [leadersLoading, setLeadersLoading] = useState(true);
   const [municipalityResults, setMunicipalityResults] = useState<Map<string, MunicipalityOverviewRow>>(new Map());
   const [municipalityProgress, setMunicipalityProgress] = useState({ loaded: 0, failed: 0, completed: 0, isLoading: false });
   const [refreshKey, setRefreshKey] = useState(0);
@@ -236,6 +255,7 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [liveUpdates, setLiveUpdates] = useState(true);
   const [simulationActive, setSimulationActive] = useState(false);
+  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
 
   useEffect(() => {
     if (round !== '2') return;
@@ -279,7 +299,6 @@ export default function App() {
   }, [selectedUF, showAllMunicipalities]);
 
   useEffect(() => {
-    if (selectedUF || !showAllMunicipalities) return;
     let active = true;
     getFederalUnitsMap().then((data) => {
       if (active) setUnitBoundaries(data);
@@ -287,7 +306,7 @@ export default function App() {
       if (active) setUnitBoundaries(null);
     });
     return () => { active = false; };
-  }, [selectedUF, showAllMunicipalities]);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -554,6 +573,7 @@ export default function App() {
       const unit = unitFromFeature(feature);
       if (unit) {
         setSimulationActive(false);
+        setSelectedCandidateId(null);
         setSelectedUF(unit.uf);
         setSelectedMunicipality(null);
         setShowAllMunicipalities(false);
@@ -575,6 +595,7 @@ export default function App() {
     }
     if (reference) {
       setSimulationActive(false);
+      setSelectedCandidateId(null);
       if (!selectedUF) setSelectedUF(reference.uf);
       setSelectedMunicipality(reference);
       setShowAllMunicipalities(false);
@@ -590,6 +611,7 @@ export default function App() {
   };
   const returnToCountry = () => {
     setSimulationActive(false);
+    setSelectedCandidateId(null);
     setSelectedUF(null);
     setSelectedMunicipality(null);
     setShowAllMunicipalities(false);
@@ -598,6 +620,7 @@ export default function App() {
   };
   const returnToState = () => {
     setSimulationActive(false);
+    setSelectedCandidateId(null);
     setSelectedMunicipality(null);
     setShowAllMunicipalities(false);
     setResultMessage('');
@@ -623,12 +646,16 @@ export default function App() {
 
   const showCityMode = () => {
     setSimulationActive(false);
+    setSelectedCandidateId(null);
     setShowAllMunicipalities((value) => !value);
     setSelectedMunicipality(null);
   };
   const cityWinners = selectedUF || showAllMunicipalities;
   const simulationVisible = simulationActive && round === '1';
-  const mapDescription = simulationVisible
+  const focusedCandidate = result?.candidates.find((candidate) => candidate.id === selectedCandidateId);
+  const mapDescription = focusedCandidate
+    ? `Foco automático em ${focusedCandidate.ballotName}. As UFs e cidades onde lidera ficam destacadas; selecione novamente para limpar o foco.`
+    : simulationVisible
     ? municipalityProgress.isLoading
       ? `SIMULAÇÃO — resultados oficiais do 1º turno chegando em lotes; ${formatInteger(municipalityProgress.completed)} de ${formatInteger(municipalityList.length || mapData?.features.length || 5571)} municípios carregados. Nenhum voto é inventado.`
       : 'SIMULAÇÃO — resultados oficiais já publicados do 1º turno; a ordem de carregamento é demonstrativa, não ao vivo.'
@@ -655,8 +682,8 @@ export default function App() {
   const realtimeActive = isOfficialRealtime ? liveUpdates : simulationVisible;
   const realtimeDisabled = round === '2' && !roundTwoStarted;
   const realtimeLabel = isOfficialRealtime
-    ? liveUpdates ? 'Tempo real' : 'Retomar ao vivo'
-    : simulationVisible ? 'Simulação ativa' : 'Tempo real';
+    ? liveUpdates ? 'Ao vivo' : 'Retomar ao vivo'
+    : 'Ao vivo';
   const realtimeTitle = realtimeDisabled
     ? 'A demonstração usa os dados do 1º turno; selecione 1º turno. A apuração oficial do 2º turno começa em 25/10.'
     : isOfficialRealtime
@@ -672,11 +699,13 @@ export default function App() {
     }
     if (simulationVisible) {
       setSimulationActive(false);
+      setSelectedCandidateId(null);
       setShowAllMunicipalities(false);
       setSelectedMunicipality(null);
       return;
     }
     setSimulationActive(true);
+    setSelectedCandidateId(null);
     setSelectedMunicipality(null);
     setShowAllMunicipalities(true);
   };
@@ -728,12 +757,12 @@ export default function App() {
           </div>
           <div className="filters">
             <label htmlFor="office-select">CARGO</label>
-            <div className="select-wrap"><select id="office-select" value={officeCode} onChange={(event) => { const nextCode = event.target.value; setSimulationActive(false); setOfficeCode(nextCode); setSelectedMunicipality(null); if (nextCode !== '1' && nextCode !== '3') setRound('1'); }}>
+            <div className="select-wrap"><select id="office-select" value={officeCode} onChange={(event) => { const nextCode = event.target.value; setSimulationActive(false); setSelectedCandidateId(null); setOfficeCode(nextCode); setSelectedMunicipality(null); if (nextCode !== '1' && nextCode !== '3') setRound('1'); }}>
               {OFFICE_OPTIONS.map((option) => <option key={option.code} value={option.code}>{option.label}</option>)}
             </select><ChevronDown size={15} aria-hidden="true" /></div>
             <div className="round-switch" role="group" aria-label="Turno da eleição">
-              <button type="button" className={round === '1' ? 'round-option is-active' : 'round-option'} onClick={() => { setSimulationActive(false); setRound('1'); }} aria-pressed={round === '1'}>1º</button>
-              <button type="button" className={round === '2' ? 'round-option is-active' : 'round-option'} onClick={() => { setSimulationActive(false); setRound('2'); }} disabled={!canUseSecondRound} aria-pressed={round === '2'} title={canUseSecondRound ? 'Consultar o segundo turno' : 'O segundo turno está disponível para Presidente e Governador'}>2º <small>25 OUT</small></button>
+              <button type="button" className={round === '1' ? 'round-option is-active' : 'round-option'} onClick={() => { setSimulationActive(false); setSelectedCandidateId(null); setRound('1'); }} aria-pressed={round === '1'}>1º</button>
+              <button type="button" className={round === '2' ? 'round-option is-active' : 'round-option'} onClick={() => { setSimulationActive(false); setSelectedCandidateId(null); setRound('2'); }} disabled={!canUseSecondRound} aria-pressed={round === '2'} title={canUseSecondRound ? 'Consultar o segundo turno' : 'O segundo turno está disponível para Presidente e Governador'}>2º <small>25 OUT</small></button>
             </div>
           </div>
         </section>
@@ -749,6 +778,7 @@ export default function App() {
                     const uf = event.target.value;
                     if (!uf) return;
                     setSimulationActive(false);
+                    setSelectedCandidateId(null);
                     setSelectedUF(uf);
                     setSelectedMunicipality(null);
                     setShowAllMunicipalities(false);
@@ -773,10 +803,13 @@ export default function App() {
                   voteShares={cityWinners ? municipalVoteShares : leaders}
                   unitBoundaries={unitBoundaries}
                   selectedUF={selectedUF}
+                  selectedCandidateId={selectedCandidateId}
+                  candidateFocusReady={selectedUF ? municipalityIndexRound === round && (municipalityProgress.completed > 0 || !municipalityProgress.isLoading) : !leadersLoading}
                   selectedKey={selectedUF && selectedMunicipality ? selectedMunicipality.ibgeCode : undefined}
                   onSelect={handleMapSelect}
                   onSelectUF={(uf) => {
                     setSimulationActive(false);
+                    setSelectedCandidateId(null);
                     setSelectedUF(uf);
                     setSelectedMunicipality(null);
                     setShowAllMunicipalities(false);
@@ -822,6 +855,7 @@ export default function App() {
               roundTwoStarted={roundTwoStarted}
               onSelect={(municipality) => {
                 setSimulationActive(false);
+                setSelectedCandidateId(null);
                 setSelectedUF(municipality.uf);
                 setSelectedMunicipality(municipality);
                 setShowAllMunicipalities(false);
@@ -841,6 +875,8 @@ export default function App() {
               selectedMunicipality={selectedMunicipality}
               leaders={summaryLeaders}
               leadersLoading={leadersLoading}
+              selectedCandidateId={selectedCandidateId}
+              onSelectCandidate={(candidate) => setSelectedCandidateId((current) => current === candidate.id ? null : candidate.id)}
               onBack={goBack}
               onRefresh={refresh}
               refreshing={refreshing || resultStatus === 'loading'}

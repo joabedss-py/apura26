@@ -14,6 +14,8 @@ interface BrazilMapProps {
   voteShares?: Map<string, ElectionCandidate[]>;
   unitBoundaries?: FeatureCollection | null;
   selectedUF?: string | null;
+  selectedCandidateId?: string | null;
+  candidateFocusReady?: boolean;
   selectedKey?: string;
   onSelect: (feature: GeoFeature) => void;
   onSelectUF?: (uf: string) => void;
@@ -22,6 +24,13 @@ interface BrazilMapProps {
 interface MapPoint {
   x: number;
   y: number;
+}
+
+interface MapBounds {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
 }
 
 interface ViewTransform {
@@ -37,6 +46,7 @@ interface ProjectedFeature {
   path: string;
   centerX: number;
   centerY: number;
+  bounds: MapBounds;
 }
 
 interface ProjectedUnit {
@@ -45,6 +55,7 @@ interface ProjectedUnit {
   path: string;
   centerX: number;
   centerY: number;
+  bounds: MapBounds;
 }
 
 const WIDTH = 860;
@@ -112,6 +123,38 @@ function pathFor(feature: GeoFeature, project: (point: Position) => readonly [nu
   }).join(' ') + ' Z').join(' ');
 }
 
+function boundsForPoints(points: MapPoint[]): MapBounds {
+  if (!points.length) return { minX: WIDTH / 2, minY: HEIGHT / 2, maxX: WIDTH / 2, maxY: HEIGHT / 2 };
+  return points.reduce<MapBounds>((bounds, point) => ({
+    minX: Math.min(bounds.minX, point.x),
+    minY: Math.min(bounds.minY, point.y),
+    maxX: Math.max(bounds.maxX, point.x),
+    maxY: Math.max(bounds.maxY, point.y),
+  }), { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
+}
+
+function mergeBounds(bounds: MapBounds[]): MapBounds | null {
+  if (!bounds.length) return null;
+  return bounds.reduce<MapBounds>((merged, current) => ({
+    minX: Math.min(merged.minX, current.minX),
+    minY: Math.min(merged.minY, current.minY),
+    maxX: Math.max(merged.maxX, current.maxX),
+    maxY: Math.max(merged.maxY, current.maxY),
+  }), { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
+}
+
+function viewForBounds(bounds: MapBounds, minimumScale = 1.25): ViewTransform {
+  const width = Math.max(bounds.maxX - bounds.minX, 1);
+  const height = Math.max(bounds.maxY - bounds.minY, 1);
+  const fitted = Math.min((WIDTH - 64) / width, (HEIGHT - 64) / height);
+  const scale = Math.min(MAX_ZOOM, Math.max(minimumScale, fitted * 0.82));
+  return {
+    scale,
+    tx: WIDTH / 2 - ((bounds.minX + bounds.maxX) / 2) * scale,
+    ty: HEIGHT / 2 - ((bounds.minY + bounds.maxY) / 2) * scale,
+  };
+}
+
 function unitFromFeature(feature: GeoFeature) {
   const properties = feature.properties;
   const direct = properties.sigla ?? properties.SIGLA_UF ?? properties.uf ?? properties.UF;
@@ -149,19 +192,22 @@ const MapFeature = memo(function MapFeature({
   level,
   shares,
   selected,
+  selectedCandidateId,
   onSelect,
 }: {
   feature: ProjectedFeature;
   level: 'state' | 'municipality';
   shares?: ElectionCandidate[];
   selected: boolean;
+  selectedCandidateId?: string | null;
   onSelect: (feature: GeoFeature) => void;
 }) {
   const leader = shares?.[0];
+  const isDimmed = Boolean(selectedCandidateId && leader?.id !== selectedCandidateId);
   const fill = level === 'state'
     ? leader ? getCandidateColor(leader) : '#29413b'
     : mixCandidateColors(shares ?? []) ?? '#29413b';
-  const fillOpacity = selected ? 1 : leader ? 0.94 : 0.25;
+  const fillOpacity = (selected ? 1 : leader ? 0.94 : 0.25) * (isDimmed ? 0.18 : 1);
   const distribution = shares?.length ? describeVoteMix(shares) : '';
   const label = leader
     ? level === 'state'
@@ -172,7 +218,7 @@ const MapFeature = memo(function MapFeature({
     <g className="map-feature-group">
       <path
         d={feature.path}
-        className={`map-feature${selected ? ' is-selected' : ''}`}
+        className={`map-feature${selected ? ' is-selected' : ''}${isDimmed ? ' is-dimmed' : ''}`}
         fill={fill}
         fillOpacity={fillOpacity}
         stroke={selected ? '#e6fff1' : '#8aa79b'}
@@ -200,7 +246,7 @@ const MapFeature = memo(function MapFeature({
   );
 });
 
-export default function BrazilMap({ data, level, getKey, getLabel, voteShares, unitBoundaries, selectedUF, selectedKey, onSelect, onSelectUF }: BrazilMapProps) {
+export default function BrazilMap({ data, level, getKey, getLabel, voteShares, unitBoundaries, selectedUF, selectedCandidateId, candidateFocusReady = true, selectedKey, onSelect, onSelectUF }: BrazilMapProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const pointersRef = useRef(new Map<number, MapPoint>());
   const gestureRef = useRef<{ type: 'pan'; start: MapPoint; view: ViewTransform } | { type: 'pinch'; startDistance: number; anchor: MapPoint } | null>(null);
@@ -208,9 +254,10 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
   const gestureMovedRef = useRef(false);
   const [view, setView] = useState<ViewTransform>({ scale: 1, tx: 0, ty: 0 });
   const viewRef = useRef(view);
+  const autoFocusScopeRef = useRef<string | null>(null);
   viewRef.current = view;
 
-  const projection = useMemo(() => buildProjection(data.features), [data]);
+  const projection = useMemo(() => buildProjection(level === 'municipality' && selectedUF && unitBoundaries ? unitBoundaries.features : data.features), [data, level, selectedUF, unitBoundaries]);
   const features = useMemo<ProjectedFeature[]>(() => data.features.map((feature) => {
     const key = getKey(feature);
     const label = getLabel(feature);
@@ -219,11 +266,15 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
       ? points.reduce((sum, point) => [sum[0] + point[0] / points.length, sum[1] + point[1] / points.length] as Position, [0, 0] as Position)
       : [0, 0] as Position;
     const [centerX, centerY] = projection(centerPoint);
-    return { source: feature, key, label, path: pathFor(feature, projection), centerX, centerY };
+    const projectedPoints = points.map((point) => {
+      const [x, y] = projection(point);
+      return { x, y };
+    });
+    return { source: feature, key, label, path: pathFor(feature, projection), centerX, centerY, bounds: boundsForPoints(projectedPoints) };
   }), [data, getKey, getLabel, projection]);
 
   const projectedUnits = useMemo<ProjectedUnit[]>(() => {
-    if (level !== 'municipality' || !unitBoundaries || !onSelectUF || selectedUF) return [];
+    if (level !== 'municipality' || !unitBoundaries) return [];
     return unitBoundaries.features.flatMap((source) => {
       const unit = unitFromFeature(source);
       if (!unit) return [];
@@ -231,9 +282,13 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
       if (!points.length) return [];
       const center = points.reduce((sum, point) => [sum[0] + point[0] / points.length, sum[1] + point[1] / points.length] as Position, [0, 0] as Position);
       const [centerX, centerY] = projection(center);
-      return [{ uf: unit.uf, name: unit.name, path: pathFor(source, projection), centerX, centerY }];
+      const projectedPoints = points.map((point) => {
+        const [x, y] = projection(point);
+        return { x, y };
+      });
+      return [{ uf: unit.uf, name: unit.name, path: pathFor(source, projection), centerX, centerY, bounds: boundsForPoints(projectedPoints) }];
     });
-  }, [unitBoundaries, projection, level, onSelectUF, selectedUF]);
+  }, [unitBoundaries, projection, level]);
 
   const updateView = useCallback((next: ViewTransform) => {
     const clamped = clampTransform(next);
@@ -242,8 +297,57 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
   }, []);
 
   useEffect(() => {
-    updateView({ scale: 1, tx: 0, ty: 0 });
-  }, [data, level, updateView]);
+    const territoryScope = [level, selectedUF ?? '', selectedKey ?? ''].join('|');
+    const territoryFocusScope = `${territoryScope}|territory`;
+    if (level === 'municipality' && selectedUF && !unitBoundaries) return;
+
+    const focusTerritory = () => {
+      if (selectedKey) {
+        const selectedFeature = features.find((feature) => feature.key === selectedKey);
+        if (selectedFeature) {
+          updateView(viewForBounds(selectedFeature.bounds, 3.2));
+          return;
+        }
+      }
+      if (selectedUF) {
+        const selectedUnit = projectedUnits.find((unit) => unit.uf === selectedUF);
+        if (selectedUnit) {
+          updateView(viewForBounds(selectedUnit.bounds, 1.8));
+          return;
+        }
+      }
+      updateView({ scale: 1, tx: 0, ty: 0 });
+    };
+
+    if (selectedCandidateId && !candidateFocusReady) {
+      if (autoFocusScopeRef.current !== territoryFocusScope) {
+        autoFocusScopeRef.current = territoryFocusScope;
+        focusTerritory();
+      }
+      return;
+    }
+    if (selectedCandidateId) {
+      const leadingFeatures = features.filter((feature) => voteShares?.get(feature.key)?.[0]?.id === selectedCandidateId);
+      const leadingBounds = mergeBounds(leadingFeatures.map((feature) => feature.bounds));
+      const boundsSignature = leadingBounds
+        ? [leadingBounds.minX, leadingBounds.minY, leadingBounds.maxX, leadingBounds.maxY].map((value) => value.toFixed(2)).join(':')
+        : 'no-leading-area';
+      const candidateFocusScope = `${territoryScope}|candidate:${selectedCandidateId}|${boundsSignature}`;
+      if (autoFocusScopeRef.current === candidateFocusScope) return;
+      const fallback = (selectedKey ? features.find((feature) => feature.key === selectedKey)?.bounds : undefined)
+        ?? projectedUnits.find((unit) => unit.uf === selectedUF)?.bounds
+        ?? mergeBounds(features.map((feature) => feature.bounds));
+      const target = leadingBounds ?? fallback;
+      if (!target) return;
+      updateView(viewForBounds(target, leadingBounds ? MIN_ZOOM : 1.3));
+      autoFocusScopeRef.current = candidateFocusScope;
+      return;
+    }
+
+    if (autoFocusScopeRef.current === territoryFocusScope) return;
+    autoFocusScopeRef.current = territoryFocusScope;
+    focusTerritory();
+  }, [data, level, selectedUF, selectedKey, selectedCandidateId, candidateFocusReady, features, projectedUnits, unitBoundaries, voteShares, updateView]);
 
   const zoomAt = useCallback((anchor: MapPoint, factor: number) => {
     const current = viewRef.current;
@@ -338,7 +442,7 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
         className={`brazil-map brazil-map--${level}`}
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
         role="group"
-        aria-label={level === 'state' ? 'Mapa interativo do Brasil por estado. Arraste para mover; use mais e menos para aproximar.' : 'Mapa interativo de municípios. Arraste para mover; use mais e menos para aproximar.'}
+        aria-label={level === 'state' ? 'Mapa interativo do Brasil por estado. Arraste para mover; use mais e menos para aproximar.' : selectedUF ? `Mapa dos municípios de ${selectedUF}; as outras UFs aparecem escurecidas. Arraste para mover e use os controles para aproximar.` : 'Mapa interativo de municípios. Arraste para mover; use mais e menos para aproximar.'}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -363,6 +467,9 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
         </defs>
         <g transform={`translate(${view.tx} ${view.ty}) scale(${view.scale})`}>
           <rect width={WIDTH} height={HEIGHT} fill="url(#mapGrid)" />
+          {level === 'municipality' && selectedUF && projectedUnits.map((unit) => (
+            <path key={`uf-context-${unit.uf}`} d={unit.path} className={`map-uf-context${unit.uf === selectedUF ? ' is-focus' : ''}`} fillRule="evenodd" pointerEvents="none" />
+          ))}
           {features.map((feature) => (
             <MapFeature
               key={feature.key}
@@ -370,31 +477,36 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
               level={level}
               shares={voteShares?.get(feature.key)}
               selected={feature.key === selectedKey}
+              selectedCandidateId={selectedCandidateId}
               onSelect={onSelect}
             />
           ))}
-          {projectedUnits.map((unit) => (
-            <path key={`uf-boundary-${unit.uf}`} d={unit.path} className="map-uf-boundary" pointerEvents="none" vectorEffect="non-scaling-stroke" />
-          ))}
+          {projectedUnits.map((unit) => {
+            const isCurrent = unit.uf === selectedUF;
+            return <path key={`uf-boundary-${unit.uf}`} d={unit.path} className={`map-uf-boundary${selectedUF ? isCurrent ? ' is-focus' : ' is-dimmed' : ''}`} pointerEvents="none" vectorEffect="non-scaling-stroke" />;
+          })}
           {projectedUnits.map((unit) => {
             const [offsetX, offsetY] = UF_LABEL_OFFSETS[unit.uf] ?? [0, 0];
+            const isCurrent = unit.uf === selectedUF;
+            const canSelect = !selectedUF || !isCurrent;
             return (
               <g
                 key={`uf-label-${unit.uf}`}
-                className="map-uf-label"
+                className={`map-uf-label${selectedUF && !isCurrent ? ' is-muted' : ''}${isCurrent ? ' is-current' : ''}`}
                 transform={`translate(${unit.centerX + offsetX} ${unit.centerY + offsetY}) scale(${1 / view.scale})`}
-                role="button"
-                tabIndex={0}
-                aria-label={`${unit.uf}, ${unit.name}. Ver votação nominal desta UF.`}
-                onPointerDown={(event) => event.stopPropagation()}
-                onClick={(event) => { event.stopPropagation(); onSelectUF?.(unit.uf); }}
-                onKeyDown={(event) => {
+                role={canSelect ? 'button' : undefined}
+                tabIndex={canSelect ? 0 : -1}
+                aria-label={canSelect ? `${unit.uf}, ${unit.name}. Ver votação nominal desta UF.` : undefined}
+                pointerEvents={canSelect ? 'auto' : 'none'}
+                onPointerDown={canSelect ? (event) => event.stopPropagation() : undefined}
+                onClick={canSelect ? (event) => { event.stopPropagation(); onSelectUF?.(unit.uf); } : undefined}
+                onKeyDown={canSelect ? (event) => {
                   if (event.key === 'Enter' || event.key === ' ') {
                     event.preventDefault();
                     event.stopPropagation();
                     onSelectUF?.(unit.uf);
                   }
-                }}
+                } : undefined}
               >
                 <title>{unit.uf} — {unit.name}; abrir votação por UF</title>
                 <rect x="-16" y="-10" width="32" height="20" rx="4" />
