@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, ArrowUpRight, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Database, ExternalLink, Info, Layers3, LoaderCircle, MapPin, Pause, Play, Radio, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Activity, ArrowUpRight, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Database, ExternalLink, Info, Layers3, LoaderCircle, MapPin, Maximize2, Minimize2, Pause, Play, Radio, RefreshCw, ShieldCheck } from 'lucide-react';
 import BrazilMap from './components/BrazilMap';
 import MunicipalityResultsPanel from './components/MunicipalityResultsPanel';
 import { FEDERAL_UNITS, GOVERNOR_RUNOFF_UFS, OFFICE_OPTIONS, findUnitByCode } from './data/states';
@@ -256,6 +256,21 @@ export default function App() {
   const [liveUpdates, setLiveUpdates] = useState(true);
   const [simulationActive, setSimulationActive] = useState(false);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
+  const [mapFullscreen, setMapFullscreen] = useState(false);
+
+  useEffect(() => {
+    if (!mapFullscreen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMapFullscreen(false);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [mapFullscreen]);
 
   useEffect(() => {
     if (round !== '2') return;
@@ -581,6 +596,7 @@ export default function App() {
       if (unit) {
         setSimulationActive(false);
         setSelectedCandidateId(null);
+        setOfficeCode('1');
         setSelectedUF(unit.uf);
         setSelectedMunicipality(null);
         setShowAllMunicipalities(false);
@@ -789,7 +805,7 @@ export default function App() {
           </div>
         </section>
 
-        <section className="workspace">
+        <section className={`workspace${mapFullscreen ? ' workspace--fullscreen' : ''}`} aria-label="Mapa e apuração eleitoral">
           <div className="map-panel">
             <div className="map-panel-heading">
               <div><div className="map-title-line"><MapPin size={16} /><h2>{regionLabel}</h2>{selectedUF && <span className="unit-chip">{selectedUF}</span>}</div><p>{mapDescription}</p></div>
@@ -801,6 +817,7 @@ export default function App() {
                     if (!uf) return;
                     setSimulationActive(false);
                     setSelectedCandidateId(null);
+                    setOfficeCode('1');
                     clearCurrentResult();
                     setSelectedUF(uf);
                     setSelectedMunicipality(null);
@@ -813,6 +830,9 @@ export default function App() {
                 <button type="button" className={`map-mode-toggle${showAllMunicipalities ? ' is-active' : ''}`} onClick={showCityMode} aria-pressed={showAllMunicipalities} title={showAllMunicipalities ? 'Voltar à visualização territorial' : selectedUF ? 'Ver resultados de todos os municípios desta UF' : 'Ver resultados de todos os municípios do Brasil'}><Layers3 size={14} /><span>{showAllMunicipalities ? 'Mapa por UF' : selectedUF ? 'Resultados municipais' : 'Todas as cidades'}</span></button>
                 <button type="button" className={`live-toggle${realtimeActive ? ' is-active' : ''}`} onClick={toggleRealtime} aria-pressed={realtimeActive} title={realtimeTitle} disabled={realtimeDisabled}>
                   {isOfficialRealtime && liveUpdates ? <Radio size={14} /> : simulationVisible ? <Activity size={14} /> : <Play size={14} />}<span>{realtimeLabel}</span>{isOfficialRealtime && liveUpdates ? <i aria-hidden="true" /> : simulationVisible ? <Pause size={12} /> : null}
+                </button>
+                <button type="button" className="map-fullscreen-toggle" onClick={() => setMapFullscreen((value) => !value)} aria-label={mapFullscreen ? 'Sair da tela inteira' : 'Expandir mapa e apuração para tela inteira'} aria-pressed={mapFullscreen} title={mapFullscreen ? 'Sair da tela inteira (Esc)' : 'Expandir mapa e apuração para tela inteira'}>
+                  {mapFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}<span>{mapFullscreen ? 'Fechar' : 'Tela inteira'}</span>
                 </button>
               </div>
             </div>
@@ -833,6 +853,7 @@ export default function App() {
                   onSelectUF={(uf) => {
                     setSimulationActive(false);
                     setSelectedCandidateId(null);
+                    setOfficeCode('1');
                     clearCurrentResult();
                     setSelectedUF(uf);
                     setSelectedMunicipality(null);

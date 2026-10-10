@@ -62,7 +62,7 @@ const WIDTH = 860;
 const HEIGHT = 560;
 const voteFormatter = new Intl.NumberFormat('pt-BR');
 const MIN_ZOOM = 1;
-const MAX_ZOOM = 16;
+const MAX_ZOOM = 32;
 const UF_LABEL_OFFSETS: Record<string, readonly [number, number]> = {
   AL: [10, -2], AP: [6, 0], DF: [0, 9], ES: [7, 2], PB: [9, -4], PE: [9, 0], RJ: [7, 5], RN: [7, -5], SE: [8, 4],
 };
@@ -249,14 +249,15 @@ const MapFeature = memo(function MapFeature({
 
 export default function BrazilMap({ data, level, getKey, getLabel, voteShares, unitBoundaries, selectedUF, selectedCandidateId, candidateFocusReady = true, selectedKey, onSelect, onSelectUF }: BrazilMapProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
+  const viewGroupRef = useRef<SVGGElement | null>(null);
+  const wheelCommitTimerRef = useRef<number | null>(null);
   const pointersRef = useRef(new Map<number, MapPoint>());
-  const gestureRef = useRef<{ type: 'pan'; start: MapPoint; view: ViewTransform } | { type: 'pinch'; startDistance: number; anchor: MapPoint } | null>(null);
+  const gestureRef = useRef<{ type: 'pan'; start: MapPoint; view: ViewTransform } | { type: 'pinch'; startDistance: number; startScale: number; anchor: MapPoint } | null>(null);
   const suppressClickRef = useRef(false);
   const gestureMovedRef = useRef(false);
-  const [view, setView] = useState<ViewTransform>({ scale: 1, tx: 0, ty: 0 });
-  const viewRef = useRef(view);
+  const [, setViewRevision] = useState(0);
+  const viewRef = useRef<ViewTransform>({ scale: 1, tx: 0, ty: 0 });
   const autoFocusScopeRef = useRef<string | null>(null);
-  viewRef.current = view;
 
   const projection = useMemo(() => buildProjection(level === 'municipality' && selectedUF && unitBoundaries ? unitBoundaries.features : data.features), [data, level, selectedUF, unitBoundaries]);
   const features = useMemo<ProjectedFeature[]>(() => data.features.map((feature) => {
@@ -294,8 +295,16 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
   const updateView = useCallback((next: ViewTransform) => {
     const clamped = clampTransform(next);
     viewRef.current = clamped;
-    setView(clamped);
+    setViewRevision((revision) => revision + 1);
   }, []);
+
+  const applyGestureView = useCallback((next: ViewTransform) => {
+    const clamped = clampTransform(next);
+    viewRef.current = clamped;
+    viewGroupRef.current?.setAttribute('transform', `translate(${clamped.tx} ${clamped.ty}) scale(${clamped.scale})`);
+  }, []);
+
+  const commitView = useCallback(() => setViewRevision((revision) => revision + 1), []);
 
   useEffect(() => {
     const territoryScope = [level, selectedUF ?? '', selectedKey ?? ''].join('|');
@@ -379,7 +388,7 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
       const current = viewRef.current;
       const worldAnchor = { x: (midpoint.x - current.tx) / current.scale, y: (midpoint.y - current.ty) / current.scale };
       const distance = Math.max(1, Math.hypot(second.x - first.x, second.y - first.y));
-      gestureRef.current = { type: 'pinch', startDistance: distance, anchor: worldAnchor };
+      gestureRef.current = { type: 'pinch', startDistance: distance, startScale: current.scale, anchor: worldAnchor };
     }
   };
 
@@ -396,9 +405,9 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
       const [first, second] = [...pointersRef.current.values()].slice(-2);
       const midpoint = { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
       const distance = Math.max(1, Math.hypot(second.x - first.x, second.y - first.y));
-      const scale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, viewRef.current.scale * distance / gesture.startDistance));
+      const scale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, gesture.startScale * distance / gesture.startDistance));
       if (Math.abs(scale - viewRef.current.scale) > 0.003) suppressClickRef.current = true;
-      updateView({ scale, tx: midpoint.x - gesture.anchor.x * scale, ty: midpoint.y - gesture.anchor.y * scale });
+      applyGestureView({ scale, tx: midpoint.x - gesture.anchor.x * scale, ty: midpoint.y - gesture.anchor.y * scale });
       return;
     }
 
@@ -409,7 +418,7 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
         suppressClickRef.current = true;
         gestureMovedRef.current = true;
       }
-      updateView({ scale: gesture.view.scale, tx: gesture.view.tx + dx, ty: gesture.view.ty + dy });
+      applyGestureView({ scale: gesture.view.scale, tx: gesture.view.tx + dx, ty: gesture.view.ty + dy });
     }
   };
 
@@ -423,18 +432,40 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
     } else if (pointersRef.current.size === 0) {
       gestureRef.current = null;
       if (gestureMovedRef.current) {
+        commitView();
         suppressClickRef.current = true;
-        window.setTimeout(() => { suppressClickRef.current = false; }, 80);
+        window.setTimeout(() => { suppressClickRef.current = false; }, 150);
       }
       gestureMovedRef.current = false;
     }
   };
 
-  const handleWheel = (event: React.WheelEvent<SVGSVGElement>) => {
+  const handleWheel = useCallback((event: WheelEvent) => {
     event.preventDefault();
-    const point = clientToMapPoint(event.currentTarget, event.clientX, event.clientY);
-    zoomAt(point, event.deltaY < 0 ? 1.16 : 1 / 1.16);
-  };
+    const svg = event.currentTarget as SVGSVGElement;
+    const point = clientToMapPoint(svg, event.clientX, event.clientY);
+    const current = viewRef.current;
+    const scale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, current.scale * (event.deltaY < 0 ? 1.16 : 1 / 1.16)));
+    const ratio = scale / current.scale;
+    applyGestureView({ scale, tx: point.x - (point.x - current.tx) * ratio, ty: point.y - (point.y - current.ty) * ratio });
+    if (wheelCommitTimerRef.current !== null) window.clearTimeout(wheelCommitTimerRef.current);
+    wheelCommitTimerRef.current = window.setTimeout(() => {
+      wheelCommitTimerRef.current = null;
+      commitView();
+    }, 120);
+  }, [applyGestureView, commitView]);
+
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    svg.addEventListener('wheel', handleWheel, { passive: false });
+    return () => {
+      svg.removeEventListener('wheel', handleWheel);
+      if (wheelCommitTimerRef.current !== null) window.clearTimeout(wheelCommitTimerRef.current);
+    };
+  }, [handleWheel]);
+
+  const renderedView = viewRef.current;
 
   return (
     <div className="map-viewport">
@@ -448,7 +479,6 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
-        onWheel={handleWheel}
         onClickCapture={(event) => {
           if (suppressClickRef.current) {
             event.preventDefault();
@@ -466,7 +496,7 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
             <path d="M 36 0 L 0 0 0 36" fill="none" stroke="#b6dfce" strokeOpacity=".045" strokeWidth="1" />
           </pattern>
         </defs>
-        <g transform={`translate(${view.tx} ${view.ty}) scale(${view.scale})`}>
+        <g ref={viewGroupRef} transform={`translate(${renderedView.tx} ${renderedView.ty}) scale(${renderedView.scale})`}>
           <rect width={WIDTH} height={HEIGHT} fill="url(#mapGrid)" />
           {level === 'municipality' && selectedUF && projectedUnits.map((unit) => (
             <path key={`uf-context-${unit.uf}`} d={unit.path} className={`map-uf-context${unit.uf === selectedUF ? ' is-focus' : ''}`} fillRule="evenodd" pointerEvents="none" />
@@ -494,7 +524,7 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
               <g
                 key={`uf-label-${unit.uf}`}
                 className={`map-uf-label${selectedUF && !isCurrent ? ' is-muted' : ''}${isCurrent ? ' is-current' : ''}`}
-                transform={`translate(${unit.centerX + offsetX} ${unit.centerY + offsetY}) scale(${1 / view.scale})`}
+                transform={`translate(${unit.centerX + offsetX} ${unit.centerY + offsetY}) scale(${1 / renderedView.scale})`}
                 role={canSelect ? 'button' : undefined}
                 tabIndex={canSelect ? 0 : -1}
                 aria-label={canSelect ? `${unit.uf}, ${unit.name}. Ver votação nominal desta UF.` : undefined}
@@ -518,9 +548,9 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
         </g>
       </svg>
       <div className="map-zoom-controls" role="group" aria-label="Controles de zoom do mapa">
-        <button type="button" aria-label="Aproximar mapa" title="Aproximar" onClick={() => zoomAtCenter(1.35)} disabled={view.scale >= MAX_ZOOM}><Plus size={17} /></button>
-        <span className="map-zoom-level" aria-live="polite">{Math.round(view.scale * 100)}%</span>
-        <button type="button" aria-label="Afastar mapa" title="Afastar" onClick={() => zoomAtCenter(1 / 1.35)} disabled={view.scale <= MIN_ZOOM}><Minus size={17} /></button>
+        <button type="button" aria-label="Aproximar mapa" title="Aproximar" onClick={() => zoomAtCenter(1.35)} disabled={renderedView.scale >= MAX_ZOOM}><Plus size={17} /></button>
+        <span className="map-zoom-level" aria-live="polite">{Math.round(renderedView.scale * 100)}%</span>
+        <button type="button" aria-label="Afastar mapa" title="Afastar" onClick={() => zoomAtCenter(1 / 1.35)} disabled={renderedView.scale <= MIN_ZOOM}><Minus size={17} /></button>
         <button type="button" className="map-zoom-reset" aria-label="Restaurar enquadramento do mapa" title="Restaurar enquadramento" onClick={() => updateView({ scale: 1, tx: 0, ty: 0 })}><LocateFixed size={16} /></button>
       </div>
     </div>
