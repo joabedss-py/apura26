@@ -36,3 +36,9 @@ As respostas compactas JWS usadas pela aplicação são verificadas com Ed25519 
 
 O TSE pode repetir municípios no cadastro por incluir pleitos suplementares; a aplicação liga e deduplica os mapas pelo código IBGE, mantendo o primeiro código eleitoral geral encontrado. A malha municipal oficial de 2025 do IBGE contém 5.573 geocódigos: 5.569 municípios (incluindo Boa Esperança do Norte, MT), o Distrito Federal, Fernando de Noronha e duas áreas operacionais de água. O site utiliza as 5.571 localidades da configuração eleitoral assinada pelo TSE (incluindo DF e Fernando de Noronha) e exclui as duas áreas de água sem disputa municipal.
 O arquivo `public/maps/brazil-municipalities-2025.topojson` foi gerado a partir do ZIP do IBGE; a simplificação cartográfica e a quantização diminuem o peso de transferência, preservando as 5.571 localidades eleitorais e seus códigos `CD_MUN` ligados ao cadastro assinado do TSE. A origem é atribuída ao IBGE; o TSE é a autoridade para a relação de localidades e códigos de consulta.
+
+## Interação do mapa e acompanhamento
+
+- No mapa nacional de municípios, os limites estaduais e as siglas das 27 UFs (incluindo DF) são sobrepostos à camada municipal. Clicar ou tocar numa sigla abre a votação oficial nominal da UF selecionada; o seletor de UF ao lado do mapa oferece o mesmo atalho.
+- A cor composta de cada UF/município combina as cores fixas das candidaturas em proporção aos votos oficiais recebidos por cada uma. A lista/tooltip identifica os três percentuais mais altos; não se substitui resultado oficial por simulação.
+- O botão independente **Tempo real** pausa e retoma o polling do segundo turno: consulta local a cada 30 s e panorama nacional por lotes a cada 3 min, condicionado à visibilidade da página e às salvaguardas de carga no TSE. O 1º turno arquivado não é consultado continuamente.

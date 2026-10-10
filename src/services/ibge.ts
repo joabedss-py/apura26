@@ -6,6 +6,7 @@ const IBGE_API = 'https://servicodados.ibge.gov.br/api/v3/malhas';
 const COMMON_QUERY = 'formato=application/vnd.geo+json&qualidade=minima';
 const MUNICIPAL_MESH_URL = '/maps/brazil-municipalities-2025.topojson';
 let allMunicipalitiesPromise: Promise<FeatureCollection> | undefined;
+let federalUnitsPromise: Promise<FeatureCollection> | undefined;
 
 async function fetchGeoJson(url: string): Promise<FeatureCollection> {
   const response = await fetch(url, { headers: { Accept: 'application/vnd.geo+json, application/json' } });
@@ -18,7 +19,11 @@ async function fetchGeoJson(url: string): Promise<FeatureCollection> {
 }
 
 export function getFederalUnitsMap(): Promise<FeatureCollection> {
-  return fetchGeoJson(`${IBGE_API}/paises/BR?${COMMON_QUERY}&intrarregiao=UF`);
+  federalUnitsPromise ??= fetchGeoJson(`${IBGE_API}/paises/BR?${COMMON_QUERY}&intrarregiao=UF`).catch((error: unknown) => {
+    federalUnitsPromise = undefined;
+    throw error;
+  });
+  return federalUnitsPromise;
 }
 
 export function getMunicipalitiesMap(uf: string): Promise<FeatureCollection> {

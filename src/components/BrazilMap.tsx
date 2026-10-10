@@ -1,16 +1,21 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LocateFixed, Minus, Plus } from 'lucide-react';
 import type { ElectionCandidate, FeatureCollection, GeoFeature, Position } from '../types';
-import { getCandidateColor } from '../services/colors';
+import { FEDERAL_UNITS, findUnitByCode } from '../data/states';
+import { getIbgeAreaCode } from '../services/ibge';
+import { describeVoteMix, mixCandidateColors } from '../services/vote-color';
 
 interface BrazilMapProps {
   data: FeatureCollection;
   level: 'state' | 'municipality';
   getKey: (feature: GeoFeature) => string;
   getLabel: (feature: GeoFeature) => string;
-  winners?: Map<string, ElectionCandidate>;
+  voteShares?: Map<string, ElectionCandidate[]>;
+  unitBoundaries?: FeatureCollection | null;
+  selectedUF?: string | null;
   selectedKey?: string;
   onSelect: (feature: GeoFeature) => void;
+  onSelectUF?: (uf: string) => void;
 }
 
 interface MapPoint {
@@ -33,11 +38,22 @@ interface ProjectedFeature {
   centerY: number;
 }
 
+interface ProjectedUnit {
+  uf: string;
+  name: string;
+  path: string;
+  centerX: number;
+  centerY: number;
+}
+
 const WIDTH = 860;
 const HEIGHT = 560;
 const voteFormatter = new Intl.NumberFormat('pt-BR');
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 8;
+const UF_LABEL_OFFSETS: Record<string, readonly [number, number]> = {
+  AL: [10, -2], AP: [6, 0], DF: [0, 9], ES: [7, 2], PB: [9, -4], PE: [9, 0], RJ: [7, 5], RN: [7, -5], SE: [8, 4],
+};
 
 function collectPositions(value: unknown, output: Position[]): void {
   if (!Array.isArray(value)) return;
@@ -95,8 +111,15 @@ function pathFor(feature: GeoFeature, project: (point: Position) => readonly [nu
   }).join(' ') + ' Z').join(' ');
 }
 
-function colorFor(candidate?: ElectionCandidate): string {
-  return candidate ? getCandidateColor(candidate) : '#29413b';
+function unitFromFeature(feature: GeoFeature) {
+  const properties = feature.properties;
+  const direct = properties.sigla ?? properties.SIGLA_UF ?? properties.uf ?? properties.UF;
+  const match = findUnitByCode(direct);
+  if (match) return match;
+  const rawCode = String(properties.CD_GEOCUF ?? properties.CD_UF ?? properties.codarea ?? properties.codigo ?? getIbgeAreaCode(feature));
+  const digits = rawCode.replace(/\D/g, '');
+  const prefix = digits.slice(0, 2);
+  return FEDERAL_UNITS.find((unit) => unit.ibgeCode === prefix) ?? findUnitByCode(prefix);
 }
 
 function clientToMapPoint(svg: SVGSVGElement, clientX: number, clientY: number): MapPoint {
@@ -123,21 +146,22 @@ function clampTransform(value: ViewTransform): ViewTransform {
 const MapFeature = memo(function MapFeature({
   feature,
   level,
-  winner,
+  shares,
   selected,
   onSelect,
 }: {
   feature: ProjectedFeature;
   level: 'state' | 'municipality';
-  winner?: ElectionCandidate;
+  shares?: ElectionCandidate[];
   selected: boolean;
   onSelect: (feature: GeoFeature) => void;
 }) {
-  const fill = selected ? '#53e0a1' : colorFor(winner);
-  const share = winner ? Math.max(0, Math.min(100, winner.percent)) / 100 : 0;
-  const fillOpacity = selected ? 1 : winner ? 0.3 + share * 0.6 : 0.25;
-  const label = winner
-    ? `${feature.label}. Mais votado: ${winner.ballotName}, ${voteFormatter.format(winner.votes)} votos, ${winner.percent.toFixed(2)} por cento.`
+  const leader = shares?.[0];
+  const fill = selected ? '#53e0a1' : mixCandidateColors(shares ?? []) ?? '#29413b';
+  const fillOpacity = selected ? 1 : leader ? 0.94 : 0.25;
+  const distribution = shares?.length ? describeVoteMix(shares) : '';
+  const label = leader
+    ? `${feature.label}. Mistura proporcional de votos: ${distribution}. Líder: ${leader.ballotName}, ${voteFormatter.format(leader.votes)} votos.`
     : `${feature.label}. Selecione para consultar.`;
   return (
     <g className="map-feature-group">
@@ -160,7 +184,7 @@ const MapFeature = memo(function MapFeature({
           }
         }}
       >
-        <title>{winner ? `${feature.label} · ${winner.ballotName} · ${voteFormatter.format(winner.votes)} votos (${winner.percent.toFixed(2)}%)` : feature.label}</title>
+        <title>{leader ? `${feature.label} · ${distribution}` : feature.label}</title>
       </path>
       {level === 'state' && (
         <text x={feature.centerX} y={feature.centerY} className="map-unit-label" textAnchor="middle" dominantBaseline="central" aria-hidden="true">
@@ -171,7 +195,7 @@ const MapFeature = memo(function MapFeature({
   );
 });
 
-export default function BrazilMap({ data, level, getKey, getLabel, winners, selectedKey, onSelect }: BrazilMapProps) {
+export default function BrazilMap({ data, level, getKey, getLabel, voteShares, unitBoundaries, selectedUF, selectedKey, onSelect, onSelectUF }: BrazilMapProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const pointersRef = useRef(new Map<number, MapPoint>());
   const gestureRef = useRef<{ type: 'pan'; start: MapPoint; view: ViewTransform } | { type: 'pinch'; startDistance: number; anchor: MapPoint } | null>(null);
@@ -192,6 +216,19 @@ export default function BrazilMap({ data, level, getKey, getLabel, winners, sele
     const [centerX, centerY] = projection(centerPoint);
     return { source: feature, key, label, path: pathFor(feature, projection), centerX, centerY };
   }), [data, getKey, getLabel, projection]);
+
+  const projectedUnits = useMemo<ProjectedUnit[]>(() => {
+    if (level !== 'municipality' || !unitBoundaries || !onSelectUF || selectedUF) return [];
+    return unitBoundaries.features.flatMap((source) => {
+      const unit = unitFromFeature(source);
+      if (!unit) return [];
+      const points = ringsFor(source).flat();
+      if (!points.length) return [];
+      const center = points.reduce((sum, point) => [sum[0] + point[0] / points.length, sum[1] + point[1] / points.length] as Position, [0, 0] as Position);
+      const [centerX, centerY] = projection(center);
+      return [{ uf: unit.uf, name: unit.name, path: pathFor(source, projection), centerX, centerY }];
+    });
+  }, [unitBoundaries, projection, level, onSelectUF, selectedUF]);
 
   const updateView = useCallback((next: ViewTransform) => {
     const clamped = clampTransform(next);
@@ -326,11 +363,40 @@ export default function BrazilMap({ data, level, getKey, getLabel, winners, sele
               key={feature.key}
               feature={feature}
               level={level}
-              winner={winners?.get(feature.key)}
+              shares={voteShares?.get(feature.key)}
               selected={feature.key === selectedKey}
               onSelect={onSelect}
             />
           ))}
+          {projectedUnits.map((unit) => (
+            <path key={`uf-boundary-${unit.uf}`} d={unit.path} className="map-uf-boundary" pointerEvents="none" vectorEffect="non-scaling-stroke" />
+          ))}
+          {projectedUnits.map((unit) => {
+            const [offsetX, offsetY] = UF_LABEL_OFFSETS[unit.uf] ?? [0, 0];
+            return (
+              <g
+                key={`uf-label-${unit.uf}`}
+                className="map-uf-label"
+                transform={`translate(${unit.centerX + offsetX} ${unit.centerY + offsetY}) scale(${1 / view.scale})`}
+                role="button"
+                tabIndex={0}
+                aria-label={`${unit.uf}, ${unit.name}. Ver votação nominal desta UF.`}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => { event.stopPropagation(); onSelectUF?.(unit.uf); }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onSelectUF?.(unit.uf);
+                  }
+                }}
+              >
+                <title>{unit.uf} — {unit.name}; abrir votação por UF</title>
+                <rect x="-16" y="-10" width="32" height="20" rx="4" />
+                <text x="0" y="0" dominantBaseline="central" textAnchor="middle">{unit.uf}</text>
+              </g>
+            );
+          })}
         </g>
       </svg>
       <div className="map-zoom-controls" role="group" aria-label="Controles de zoom do mapa">

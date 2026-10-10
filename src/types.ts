@@ -58,6 +58,7 @@ export interface MunicipalityRef {
 export interface MunicipalityOverviewRow {
   municipality: MunicipalityRef;
   candidate: ElectionCandidate | null;
+  candidates?: ElectionCandidate[];
   countedSections: number | null;
   status: 'loading' | 'ready' | 'error' | 'no-runoff';
 }
