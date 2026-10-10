@@ -1,0 +1,7 @@
+# Entregas da primeira versão — Resultados Eleições 2026
+
+- [x] **Origem e situação dos dados:** Mostrar resultados oficiais do 1º turno de 2026 quando disponíveis, identificar o TSE como fonte e exibir a atualização informada pelo TSE. Não apresentar números fictícios como apuração. Diferenciar carregamento, indisponibilidade, ausência de dados e a situação do 2º turno.
+- [x] **Mapas e navegação territorial:** Apresentar um mapa interativo do Brasil e permitir entrar nas unidades da Federação; na visão estadual, mostrar a malha municipal e permitir selecionar municípios; no nível municipal, mostrar o contexto local. Implementar navegação Brasil → estado → município, trilha de navegação e retorno aos níveis anteriores.
+- [x] **Consulta eleitoral:** Disponibilizar seletor de cargo para as disputas contempladas. Listar candidatos por cargo e território, com votos, percentuais e ordenação por desempenho conforme os dados oficiais do TSE. Atribuir cores individuais às candidaturas e manter as cores correspondentes no mapa e na lista.
+- [x] **Integração de dados oficiais:** Separar a camada de dados da apresentação; consumir e normalizar os resultados do TSE e as malhas territoriais do IBGE. Verificar a assinatura digital dos resultados do TSE. Lidar com indisponibilidade, carregamento, ausência de apuração e atualização futura.
+- [x] **Experiência responsiva:** Adaptar o layout para computadores e dispositivos móveis, preservando a legibilidade de mapas, filtros e resultados.

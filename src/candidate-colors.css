@@ -1,0 +1,17 @@
+.candidate-color-dot { position: relative; top: -1px; flex: none; width: 7px; height: 7px; border-radius: 50%; box-shadow: 0 0 7px rgba(255, 255, 255, .15); }
+.candidate-rank { color: var(--candidate-color, #6e8478); }
+.candidate-votes { color: #d0ddd5; font-size: 8px; font-weight: 500; }
+.candidate-status { color: #788e82; }
+.candidate-percent { font-weight: 600; }
+.candidate-meter span { box-shadow: 0 0 7px rgba(220, 255, 235, .08); }
+.map-legend { min-width: 0; max-width: 78%; flex-wrap: wrap; }
+.legend-label { color: #738a7c; font-size: 7px; letter-spacing: .08em; }
+.map-legend-items { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.map-legend-item { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 120px; color: #a9baaf; font-size: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.map-legend-item i { display: inline-block; flex: none; width: 7px; height: 7px; border-radius: 50%; }
+@media (max-width: 540px) {
+  .map-legend { max-width: 74%; gap: 5px; }
+  .map-legend-items { gap: 5px; }
+  .map-legend-item { max-width: 78px; }
+  .candidate-votes { font-size: 7px; }
+}
