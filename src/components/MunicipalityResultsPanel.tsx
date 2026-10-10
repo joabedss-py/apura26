@@ -23,6 +23,7 @@ interface MunicipalityResultsPanelProps {
   failed: number;
   completed: number;
   isLoading: boolean;
+  simulationActive: boolean;
   indexLoading: boolean;
   indexError: string;
   expectedTotal: number;
@@ -37,6 +38,7 @@ export default function MunicipalityResultsPanel({
   failed,
   completed,
   isLoading,
+  simulationActive,
   indexLoading,
   indexError,
   expectedTotal,
@@ -60,13 +62,15 @@ export default function MunicipalityResultsPanel({
   return (
     <aside className="results-panel city-results-panel">
       <div className="panel-heading city-panel-heading">
-        <div><p className="eyebrow">RESULTADOS POR MUNICÍPIO</p><h2>{formatInteger(totalCount)} cidades</h2><p className="panel-subtitle">{round === '2' ? '2º turno' : '1º turno'} <span>·</span> líder por município</p></div>
+        <div><p className="eyebrow">RESULTADOS POR MUNICÍPIO</p><h2>{formatInteger(totalCount)} cidades</h2><p className="panel-subtitle">{simulationActive ? 'SIMULAÇÃO' : round === '2' ? '2º turno' : '1º turno'} <span>·</span> líder por município</p></div>
         <span className={`city-load-status${isLoading ? ' is-loading' : ''}`} title={`${formatInteger(loaded)} cidades com resultados · ${formatInteger(failed)} sem dados`}>
           {isLoading ? <LoaderCircle size={13} className="spin" /> : <ShieldCheck size={13} />}{formatInteger(completed)} / {formatInteger(expectedTotal || rows.length)}
         </span>
       </div>
       <p className="city-results-note">
-        {round === '2' && !roundTwoStarted
+        {simulationActive
+          ? 'SIMULAÇÃO DE CARREGAMENTO — resultados oficiais já publicados do 1º turno são consultados em lotes; nenhum voto é inventado e a sequência não é ao vivo.'
+          : round === '2' && !roundTwoStarted
           ? 'A apuração do 2º turno começa em 25/10, às 17h (Brasília). As cidades serão consultadas progressivamente quando os votos oficiais começarem.'
           : indexError
             ? 'Não foi possível consultar o cadastro territorial assinado do TSE. Tente novamente mais tarde.'

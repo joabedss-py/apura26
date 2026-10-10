@@ -3,6 +3,7 @@ import { LocateFixed, Minus, Plus } from 'lucide-react';
 import type { ElectionCandidate, FeatureCollection, GeoFeature, Position } from '../types';
 import { FEDERAL_UNITS, findUnitByCode } from '../data/states';
 import { getIbgeAreaCode } from '../services/ibge';
+import { getCandidateColor } from '../services/colors';
 import { describeVoteMix, mixCandidateColors } from '../services/vote-color';
 
 interface BrazilMapProps {
@@ -157,11 +158,15 @@ const MapFeature = memo(function MapFeature({
   onSelect: (feature: GeoFeature) => void;
 }) {
   const leader = shares?.[0];
-  const fill = selected ? '#53e0a1' : mixCandidateColors(shares ?? []) ?? '#29413b';
+  const fill = level === 'state'
+    ? leader ? getCandidateColor(leader) : '#29413b'
+    : mixCandidateColors(shares ?? []) ?? '#29413b';
   const fillOpacity = selected ? 1 : leader ? 0.94 : 0.25;
   const distribution = shares?.length ? describeVoteMix(shares) : '';
   const label = leader
-    ? `${feature.label}. Mistura proporcional de votos: ${distribution}. Líder: ${leader.ballotName}, ${voteFormatter.format(leader.votes)} votos.`
+    ? level === 'state'
+      ? `${feature.label}. Candidato mais votado: ${leader.ballotName}, ${leader.percent.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%, ${voteFormatter.format(leader.votes)} votos.`
+      : `${feature.label}. Mistura proporcional de votos: ${distribution}. Líder: ${leader.ballotName}, ${voteFormatter.format(leader.votes)} votos.`
     : `${feature.label}. Selecione para consultar.`;
   return (
     <g className="map-feature-group">
@@ -184,7 +189,7 @@ const MapFeature = memo(function MapFeature({
           }
         }}
       >
-        <title>{leader ? `${feature.label} · ${distribution}` : feature.label}</title>
+        <title>{leader ? `${feature.label} · ${level === 'state' ? `Mais votado: ${leader.ballotName}` : distribution}` : feature.label}</title>
       </path>
       {level === 'state' && (
         <text x={feature.centerX} y={feature.centerY} className="map-unit-label" textAnchor="middle" dominantBaseline="central" aria-hidden="true">

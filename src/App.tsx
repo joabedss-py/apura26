@@ -226,6 +226,7 @@ export default function App() {
   const [municipalityIndex, setMunicipalityIndex] = useState<Map<string, MunicipalityRef> | null>(null);
   const [municipalityIndexRound, setMunicipalityIndexRound] = useState<ElectionRound | null>(null);
   const [municipalityIndexError, setMunicipalityIndexError] = useState('');
+  const [municipalityIndexRetryKey, setMunicipalityIndexRetryKey] = useState(0);
   const [leaders, setLeaders] = useState<Map<string, ElectionCandidate[]>>(new Map());
   const [leadersLoading, setLeadersLoading] = useState(false);
   const [municipalityResults, setMunicipalityResults] = useState<Map<string, MunicipalityOverviewRow>>(new Map());
@@ -234,6 +235,7 @@ export default function App() {
   const [municipalityRefreshKey, setMunicipalityRefreshKey] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [liveUpdates, setLiveUpdates] = useState(true);
+  const [simulationActive, setSimulationActive] = useState(false);
 
   useEffect(() => {
     if (round !== '2') return;
@@ -243,6 +245,7 @@ export default function App() {
   }, [round]);
 
   const roundTwoStarted = round === '2' && clock >= ROUND_TWO_START;
+  const isOfficialRealtime = round === '2' && roundTwoStarted;
   const office = OFFICE_OPTIONS.find((option) => option.code === officeCode) ?? OFFICE_OPTIONS[0];
   const national = !selectedUF;
   const officeLabel = officeCode === '7' && selectedUF === 'DF' ? 'Deputado distrital' : office.label;
@@ -287,13 +290,22 @@ export default function App() {
   }, [selectedUF, showAllMunicipalities]);
 
   useEffect(() => {
+    let active = true;
     if (!needsMunicipalityData) {
       setMunicipalityIndex(null);
       setMunicipalityIndexRound(null);
       setMunicipalityIndexError('');
-      return;
+      setMunicipalityProgress({ loaded: 0, failed: 0, completed: 0, isLoading: false });
+      return () => { active = false; };
     }
-    let active = true;
+    if (round === '2' && !roundTwoStarted) {
+      setMunicipalityIndex(null);
+      setMunicipalityIndexRound(null);
+      setMunicipalityIndexError('');
+      setMunicipalityProgress({ loaded: 0, failed: 0, completed: 0, isLoading: false });
+      return () => { active = false; };
+    }
+    let retryTimer: number | undefined;
     setMunicipalityIndexRound(null);
     setMunicipalityIndexError('');
     setMunicipalityProgress({ loaded: 0, failed: 0, completed: 0, isLoading: true });
@@ -301,17 +313,24 @@ export default function App() {
       if (active) {
         setMunicipalityIndex(index);
         setMunicipalityIndexRound(round);
+        setMunicipalityIndexError('');
       }
     }).catch((error: unknown) => {
       if (active) {
-        setMunicipalityIndex(new Map());
-        setMunicipalityIndexRound(round);
+        setMunicipalityIndex(null);
+        setMunicipalityIndexRound(null);
         setMunicipalityIndexError(error instanceof Error ? error.message : 'Não foi possível carregar o cadastro do TSE.');
         setMunicipalityProgress({ loaded: 0, failed: 0, completed: 0, isLoading: false });
+        retryTimer = window.setTimeout(() => {
+          if (active) setMunicipalityIndexRetryKey((value) => value + 1);
+        }, ROUND_TWO_LOCAL_POLL_MS);
       }
     });
-    return () => { active = false; };
-  }, [needsMunicipalityData, round]);
+    return () => {
+      active = false;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+    };
+  }, [needsMunicipalityData, round, roundTwoStarted, municipalityIndexRetryKey]);
 
   useEffect(() => {
     let active = true;
@@ -489,13 +508,12 @@ export default function App() {
 
   useEffect(() => {
     if (round !== '2' || !roundTwoStarted || !liveUpdates) return;
-    const interval = resultStatus === 'error' ? 300_000 : ROUND_TWO_LOCAL_POLL_MS;
     const timer = window.setInterval(() => {
       if (document.visibilityState !== 'visible') return;
       setRefreshKey((value) => value + 1);
-    }, interval);
+    }, ROUND_TWO_LOCAL_POLL_MS);
     return () => window.clearInterval(timer);
-  }, [round, roundTwoStarted, resultStatus, liveUpdates]);
+  }, [round, roundTwoStarted, liveUpdates]);
 
   useEffect(() => {
     if (round !== '2' || !roundTwoStarted || !liveUpdates) return;
@@ -535,6 +553,7 @@ export default function App() {
     if (!selectedUF && !showAllMunicipalities) {
       const unit = unitFromFeature(feature);
       if (unit) {
+        setSimulationActive(false);
         setSelectedUF(unit.uf);
         setSelectedMunicipality(null);
         setShowAllMunicipalities(false);
@@ -555,6 +574,7 @@ export default function App() {
       }
     }
     if (reference) {
+      setSimulationActive(false);
       if (!selectedUF) setSelectedUF(reference.uf);
       setSelectedMunicipality(reference);
       setShowAllMunicipalities(false);
@@ -569,6 +589,7 @@ export default function App() {
     if (showAllMunicipalities || selectedUF) setMunicipalityRefreshKey((value) => value + 1);
   };
   const returnToCountry = () => {
+    setSimulationActive(false);
     setSelectedUF(null);
     setSelectedMunicipality(null);
     setShowAllMunicipalities(false);
@@ -576,6 +597,7 @@ export default function App() {
     setResultMessage('');
   };
   const returnToState = () => {
+    setSimulationActive(false);
     setSelectedMunicipality(null);
     setShowAllMunicipalities(false);
     setResultMessage('');
@@ -589,7 +611,7 @@ export default function App() {
   const legendCandidates = useMemo(() => {
     const candidates: ElectionCandidate[] = showAllMunicipalities || selectedUF
       ? [...municipalityResults.values()].filter((row) => row.candidate && row.status === 'ready' && row.candidate.votes > 0).map((row) => row.candidate as ElectionCandidate)
-      : [...leaders.values()].flat();
+      : [...summaryLeaders.values()];
     const counts = new Map<string, { candidate: ElectionCandidate; count: number }>();
     candidates.forEach((candidate) => {
       const entry = counts.get(candidate.id);
@@ -597,31 +619,67 @@ export default function App() {
       else counts.set(candidate.id, { candidate, count: 1 });
     });
     return [...counts.values()].sort((a, b) => b.count - a.count).slice(0, 3);
-  }, [leaders, municipalityResults, selectedUF, showAllMunicipalities]);
+  }, [summaryLeaders, municipalityResults, selectedUF, showAllMunicipalities]);
 
   const showCityMode = () => {
+    setSimulationActive(false);
     setShowAllMunicipalities((value) => !value);
     setSelectedMunicipality(null);
   };
   const cityWinners = selectedUF || showAllMunicipalities;
-  const mapDescription = showAllMunicipalities
-    ? 'Cada área combina as cores das candidaturas conforme a proporção oficial de votos. Selecione uma cidade para abrir a votação nominal.'
-    : selectedUF
-      ? municipalityProgress.isLoading
-        ? `Resultados municipais carregados progressivamente: ${formatInteger(municipalityProgress.completed)} de ${formatInteger(municipalityList.length)}.`
-        : 'Cada município reflete a distribuição oficial de votos. Selecione uma cidade para detalhar a votação nominal.'
-      : 'As UFs mostram a distribuição dos votos oficiais. Selecione uma para abrir o mapa municipal ou veja todas as cidades.';
-  const mapLegendMessage = round === '2' && !roundTwoStarted
-    ? 'Apuração começa em 25/10 · 17h'
+  const simulationVisible = simulationActive && round === '1';
+  const mapDescription = simulationVisible
+    ? municipalityProgress.isLoading
+      ? `SIMULAÇÃO — resultados oficiais do 1º turno chegando em lotes; ${formatInteger(municipalityProgress.completed)} de ${formatInteger(municipalityList.length || mapData?.features.length || 5571)} municípios carregados. Nenhum voto é inventado.`
+      : 'SIMULAÇÃO — resultados oficiais já publicados do 1º turno; a ordem de carregamento é demonstrativa, não ao vivo.'
     : showAllMunicipalities
-      ? 'Aguardando resultados municipais'
+      ? 'Cada município combina as cores das candidaturas conforme a proporção oficial de votos. Selecione uma cidade para abrir a votação nominal.'
       : selectedUF
-        ? municipalityIndexError
-          ? 'Cadastro municipal do TSE indisponível'
-          : municipalityProgress.isLoading
-            ? 'Carregando resultados municipais'
-            : 'Aguardando resultados municipais'
-        : 'Resultados por UF';
+        ? municipalityProgress.isLoading
+          ? `Resultados municipais carregados progressivamente: ${formatInteger(municipalityProgress.completed)} de ${formatInteger(municipalityList.length)}.`
+          : 'Cada município reflete a distribuição oficial de votos. Selecione uma cidade para detalhar a votação nominal.'
+        : 'Cada UF recebe a cor do candidato mais votado. Selecione um estado para abrir o mapa municipal ou veja todas as cidades.';
+  const mapLegendMessage = simulationVisible
+    ? 'Simulação progressiva · dados oficiais do TSE'
+    : round === '2' && !roundTwoStarted
+      ? 'Apuração começa em 25/10 · 17h'
+      : showAllMunicipalities
+        ? 'Aguardando resultados municipais'
+        : selectedUF
+          ? municipalityIndexError
+            ? 'Cadastro municipal do TSE indisponível'
+            : municipalityProgress.isLoading
+              ? 'Carregando resultados municipais'
+              : 'Aguardando resultados municipais'
+          : 'Vencedores por UF';
+  const realtimeActive = isOfficialRealtime ? liveUpdates : simulationVisible;
+  const realtimeDisabled = round === '2' && !roundTwoStarted;
+  const realtimeLabel = isOfficialRealtime
+    ? liveUpdates ? 'Tempo real' : 'Retomar ao vivo'
+    : simulationVisible ? 'Simulação ativa' : 'Tempo real';
+  const realtimeTitle = realtimeDisabled
+    ? 'A demonstração usa os dados do 1º turno; selecione 1º turno. A apuração oficial do 2º turno começa em 25/10.'
+    : isOfficialRealtime
+      ? liveUpdates ? 'Pausar atualizações oficiais do TSE' : 'Retomar atualizações oficiais do TSE'
+      : simulationVisible
+        ? 'Encerrar a demonstração. Os resultados são oficiais, mas a sequência de chegada não é ao vivo.'
+        : 'Simular o carregamento progressivo dos resultados oficiais já publicados; nenhum voto será inventado.';
+  const toggleRealtime = () => {
+    if (realtimeDisabled) return;
+    if (isOfficialRealtime) {
+      setLiveUpdates((value) => !value);
+      return;
+    }
+    if (simulationVisible) {
+      setSimulationActive(false);
+      setShowAllMunicipalities(false);
+      setSelectedMunicipality(null);
+      return;
+    }
+    setSimulationActive(true);
+    setSelectedMunicipality(null);
+    setShowAllMunicipalities(true);
+  };
 
   return (
     <div className="app-shell">
@@ -632,7 +690,7 @@ export default function App() {
           <span className="brand-divider" />
           <span className="brand-context">OBSERVATÓRIO ELEITORAL<br /><b>BRASIL · 2026</b></span>
         </a>
-        <div className="topbar-right"><span className="topbar-label"><span className="live-dot" /> {round === '2' && roundTwoStarted ? 'AO VIVO · TSE' : round === '2' ? '2º TURNO · 25 OUT' : 'DADOS ABERTOS'}</span><a className="topbar-link" href={TSE_RESULTS_URL} target="_blank" rel="noreferrer">Portal do TSE <ArrowUpRight size={14} /></a></div>
+        <div className="topbar-right"><span className="topbar-label"><span className="live-dot" /> {isOfficialRealtime ? liveUpdates ? 'AO VIVO · TSE' : 'TSE · PAUSADO' : round === '2' ? '2º TURNO · 25 OUT' : simulationVisible ? 'SIMULAÇÃO · DADOS TSE' : 'DADOS ABERTOS'}</span><a className="topbar-link" href={TSE_RESULTS_URL} target="_blank" rel="noreferrer">Portal do TSE <ArrowUpRight size={14} /></a></div>
       </header>
 
       <main>
@@ -645,17 +703,19 @@ export default function App() {
           <div className="hero-status">
             <div className="hero-status-kicker"><Activity size={14} /> CENTRAL DE APURAÇÃO</div>
             <div className="hero-status-main"><span className="hero-status-number">{round === '1' ? '01' : '02'}</span><div><strong>{round === '1' ? '1º turno' : '2º turno'}</strong><span>{round === '1' ? '04 OUT 2026' : '25 OUT 2026 · 17H'}</span></div></div>
-        <div className="hero-status-foot"><StatusPill status={round === '2' && !roundTwoStarted ? 'warning' : 'ok'} text={round === '2' && !roundTwoStarted ? 'AGUARDANDO APURAÇÃO' : round === '2' ? 'DADOS DO TSE · ATUALIZAÇÃO AUTOMÁTICA' : 'DADOS OFICIAIS DISPONÍVEIS'} /><span>{round === '1' ? '2º turno · 25 out' : roundTwoStarted ? showAllMunicipalities ? 'Cidades · lote progressivo' : 'Consulta local · 30s' : 'Início · 17h BRT'}</span></div>
+            <div className="hero-status-foot"><StatusPill status={round === '2' && !roundTwoStarted ? 'warning' : 'ok'} text={round === '2' && !roundTwoStarted ? 'AGUARDANDO APURAÇÃO' : round === '2' ? 'DADOS DO TSE · ATUALIZAÇÃO AUTOMÁTICA' : 'DADOS OFICIAIS DISPONÍVEIS'} /><span>{simulationVisible ? 'Simulação · dados oficiais' : round === '1' ? '2º turno · 25 out' : roundTwoStarted ? showAllMunicipalities ? 'Cidades · lote progressivo' : 'Consulta local · 30s' : 'Início · 17h BRT'}</span></div>
           </div>
         </section>
 
-        <section className={`notice-bar${round === '2' ? ' notice-bar--round-two' : ''}`} aria-label="Status dos resultados">
+        <section className={`notice-bar${round === '2' ? ' notice-bar--round-two' : simulationVisible ? ' notice-bar--simulation' : ''}`} aria-label="Status dos resultados">
           <span className="notice-icon"><Info size={16} /></span>
-          {round === '1'
-            ? <p><strong>Fonte oficial do TSE.</strong> Resultados do 1º turno de 2026. O 2º turno será acompanhado automaticamente a partir de 25 de outubro, às 17h (horário de Brasília).</p>
-            : roundTwoStarted
-              ? <p><strong>2º turno em acompanhamento.</strong> A consulta da localidade é atualizada a cada 30 segundos; o mapa completo por municípios é recarregado em lotes progressivos, respeitando o limite do TSE.</p>
-              : <p><strong>2º turno previsto para 25/10, às 17h (Brasília).</strong> A apuração ainda não começou; arquivos zerados do TSE não são mostrados como votos apurados. O acompanhamento automático começará no horário oficial.</p>}
+          {simulationVisible
+            ? <p><strong>Simulação de carregamento, não de votos.</strong> A lista e o mapa mostram progressivamente resultados oficiais já publicados do 1º turno; nenhum voto é inventado e esta sequência não é transmissão ao vivo.</p>
+            : round === '1'
+              ? <p><strong>Fonte oficial do TSE.</strong> Resultados do 1º turno de 2026. O 2º turno será acompanhado automaticamente a partir de 25 de outubro, às 17h (horário de Brasília).</p>
+              : roundTwoStarted
+                ? <p><strong>2º turno em acompanhamento.</strong> A consulta da localidade é atualizada a cada 30 segundos; o mapa completo por municípios é recarregado em lotes progressivos, respeitando o limite do TSE.</p>
+                : <p><strong>2º turno previsto para 25/10, às 17h (Brasília).</strong> A apuração ainda não começou; arquivos zerados do TSE não são mostrados como votos apurados. O acompanhamento automático começará no horário oficial.</p>}
           <a href={TSE_OPEN_DATA_URL} target="_blank" rel="noreferrer">Dados abertos <ArrowUpRight size={14} /></a>
         </section>
 
@@ -668,12 +728,12 @@ export default function App() {
           </div>
           <div className="filters">
             <label htmlFor="office-select">CARGO</label>
-            <div className="select-wrap"><select id="office-select" value={officeCode} onChange={(event) => { const nextCode = event.target.value; setOfficeCode(nextCode); setSelectedMunicipality(null); if (nextCode !== '1' && nextCode !== '3') setRound('1'); }}>
+            <div className="select-wrap"><select id="office-select" value={officeCode} onChange={(event) => { const nextCode = event.target.value; setSimulationActive(false); setOfficeCode(nextCode); setSelectedMunicipality(null); if (nextCode !== '1' && nextCode !== '3') setRound('1'); }}>
               {OFFICE_OPTIONS.map((option) => <option key={option.code} value={option.code}>{option.label}</option>)}
             </select><ChevronDown size={15} aria-hidden="true" /></div>
             <div className="round-switch" role="group" aria-label="Turno da eleição">
-              <button type="button" className={round === '1' ? 'round-option is-active' : 'round-option'} onClick={() => setRound('1')} aria-pressed={round === '1'}>1º</button>
-              <button type="button" className={round === '2' ? 'round-option is-active' : 'round-option'} onClick={() => setRound('2')} disabled={!canUseSecondRound} aria-pressed={round === '2'} title={canUseSecondRound ? 'Consultar o segundo turno' : 'O segundo turno está disponível para Presidente e Governador'}>2º <small>25 OUT</small></button>
+              <button type="button" className={round === '1' ? 'round-option is-active' : 'round-option'} onClick={() => { setSimulationActive(false); setRound('1'); }} aria-pressed={round === '1'}>1º</button>
+              <button type="button" className={round === '2' ? 'round-option is-active' : 'round-option'} onClick={() => { setSimulationActive(false); setRound('2'); }} disabled={!canUseSecondRound} aria-pressed={round === '2'} title={canUseSecondRound ? 'Consultar o segundo turno' : 'O segundo turno está disponível para Presidente e Governador'}>2º <small>25 OUT</small></button>
             </div>
           </div>
         </section>
@@ -688,6 +748,7 @@ export default function App() {
                   <select id="map-uf-select" value="" onChange={(event) => {
                     const uf = event.target.value;
                     if (!uf) return;
+                    setSimulationActive(false);
                     setSelectedUF(uf);
                     setSelectedMunicipality(null);
                     setShowAllMunicipalities(false);
@@ -697,8 +758,8 @@ export default function App() {
                   </select><ChevronDown size={12} aria-hidden="true" />
                 </label>}
                 <button type="button" className={`map-mode-toggle${showAllMunicipalities ? ' is-active' : ''}`} onClick={showCityMode} aria-pressed={showAllMunicipalities} title={showAllMunicipalities ? 'Voltar à visualização territorial' : selectedUF ? 'Ver resultados de todos os municípios desta UF' : 'Ver resultados de todos os municípios do Brasil'}><Layers3 size={14} /><span>{showAllMunicipalities ? 'Mapa por UF' : selectedUF ? 'Resultados municipais' : 'Todas as cidades'}</span></button>
-                <button type="button" className={`live-toggle${liveUpdates ? ' is-active' : ''}`} onClick={() => setLiveUpdates((value) => !value)} aria-pressed={liveUpdates} title={liveUpdates ? 'Pausar atualização automática do segundo turno' : 'Retomar atualização automática do segundo turno'}>
-                  {liveUpdates ? <Radio size={14} /> : <Play size={14} />}<span>Tempo real</span>{liveUpdates ? <i aria-hidden="true" /> : <Pause size={12} />}
+                <button type="button" className={`live-toggle${realtimeActive ? ' is-active' : ''}`} onClick={toggleRealtime} aria-pressed={realtimeActive} title={realtimeTitle} disabled={realtimeDisabled}>
+                  {isOfficialRealtime && liveUpdates ? <Radio size={14} /> : simulationVisible ? <Activity size={14} /> : <Play size={14} />}<span>{realtimeLabel}</span>{isOfficialRealtime && liveUpdates ? <i aria-hidden="true" /> : simulationVisible ? <Pause size={12} /> : null}
                 </button>
               </div>
             </div>
@@ -715,6 +776,7 @@ export default function App() {
                   selectedKey={selectedUF && selectedMunicipality ? selectedMunicipality.ibgeCode : undefined}
                   onSelect={handleMapSelect}
                   onSelectUF={(uf) => {
+                    setSimulationActive(false);
                     setSelectedUF(uf);
                     setSelectedMunicipality(null);
                     setShowAllMunicipalities(false);
@@ -727,17 +789,17 @@ export default function App() {
               <div className="map-legend">
                 {legendCandidates.length ? (
                   <>
-                    <span className="legend-label">{showAllMunicipalities ? 'CANDIDATOS' : selectedUF ? 'LÍDERES' : 'CANDIDATOS'}</span>
+                    <span className="legend-label">{showAllMunicipalities || selectedUF ? 'CANDIDATOS' : 'VENCEDORES'}</span>
                     <div className="map-legend-items">
                       {legendCandidates.map(({ candidate }) => <span className="map-legend-item" key={candidate.id} title={candidate.ballotName}><i style={{ backgroundColor: getCandidateColor(candidate) }} />{candidate.ballotName}</span>)}
                     </div>
-                    {showAllMunicipalities && <span className="map-legend-intensity">COR = PARTICIPAÇÃO</span>}
+                    {(showAllMunicipalities || selectedUF) && <span className="map-legend-intensity">COR = DISTRIBUIÇÃO DOS VOTOS</span>}
                   </>
                 ) : (
                   <>
                     <span className="legend-swatch" />
                     <span>{mapLegendMessage}</span>
-                    {showAllMunicipalities && <span className="map-legend-intensity">COR = PARTICIPAÇÃO</span>}
+                    {(showAllMunicipalities || selectedUF) && <span className="map-legend-intensity">COR = DISTRIBUIÇÃO DOS VOTOS</span>}
                   </>
                 )}
               </div>
@@ -752,12 +814,14 @@ export default function App() {
               failed={municipalityProgress.failed}
               completed={municipalityProgress.completed}
               isLoading={municipalityProgress.isLoading}
+              simulationActive={simulationVisible}
               indexLoading={showAllMunicipalities && municipalityIndexRound !== round && !municipalityIndexError}
               indexError={municipalityIndexError}
               expectedTotal={municipalityList.length || mapData?.features.length || (!selectedUF ? 5571 : 0)}
               round={round}
               roundTwoStarted={roundTwoStarted}
               onSelect={(municipality) => {
+                setSimulationActive(false);
                 setSelectedUF(municipality.uf);
                 setSelectedMunicipality(municipality);
                 setShowAllMunicipalities(false);
