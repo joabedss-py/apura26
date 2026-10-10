@@ -35,12 +35,14 @@ export const FEDERAL_UNITS: FederalUnit[] = [
   { uf: 'TO', name: 'Tocantins', region: 'Norte', ibgeCode: '17' },
 ];
 
+export const GOVERNOR_RUNOFF_UFS = ['AC', 'AM', 'ES', 'RN', 'TO', 'DF'] as const;
+
 export const OFFICE_OPTIONS = [
   { code: '1', label: 'Presidente', scope: 'Brasil' },
   { code: '3', label: 'Governador', scope: 'Estado' },
   { code: '5', label: 'Senador', scope: 'Estado' },
   { code: '6', label: 'Deputado federal', scope: 'Estado' },
-  { code: '7', label: 'Deputado estadual', scope: 'Estado' },
+  { code: '7', label: 'Deputado estadual/distrital', scope: 'Estado' },
 ] as const;
 
 export function findUnitByCode(code: unknown): FederalUnit | undefined {

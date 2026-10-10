@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, ArrowLeft, ArrowUpRight, Check, ChevronDown, ChevronRight, Clock3, Database, ExternalLink, Info, LoaderCircle, MapPin, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Activity, ArrowUpRight, Check, ChevronDown, ChevronRight, Clock3, Database, ExternalLink, Info, Layers3, LoaderCircle, MapPin, RefreshCw, ShieldCheck } from 'lucide-react';
 import BrazilMap from './components/BrazilMap';
-import { FEDERAL_UNITS, OFFICE_OPTIONS, findUnitByCode } from './data/states';
-import { getFederalUnitsMap, getIbgeAreaCode, getMunicipalitiesMap } from './services/ibge';
-import { getElectionResults, getMunicipalityIndex } from './services/tse';
-import type { ElectionCandidate, ElectionResult, FeatureCollection, GeoFeature, LoadState, MunicipalityRef } from './types';
+import MunicipalityResultsPanel from './components/MunicipalityResultsPanel';
+import { FEDERAL_UNITS, GOVERNOR_RUNOFF_UFS, OFFICE_OPTIONS, findUnitByCode } from './data/states';
+import { getAllMunicipalitiesMap, getFederalUnitsMap, getIbgeAreaCode, getMunicipalitiesMap } from './services/ibge';
 import { getCandidateColor } from './services/colors';
+import { getElectionResults, getMunicipalityIndex } from './services/tse';
+import type { ElectionCandidate, ElectionResult, ElectionRound, FeatureCollection, GeoFeature, LoadState, MunicipalityOverviewRow, MunicipalityRef } from './types';
 
 const TSE_RESULTS_URL = 'https://resultados.tse.jus.br/oficial/app/index.html';
 const TSE_OPEN_DATA_URL = 'https://dadosabertos.tse.jus.br/dataset/resultados-2026';
 const UF_BY_IBGE = new Map(FEDERAL_UNITS.map((unit) => [unit.ibgeCode, unit]));
+const ROUND_TWO_START = Date.parse('2026-10-25T20:00:00Z');
+const ROUND_TWO_LOCAL_POLL_MS = 30_000;
+const ROUND_TWO_CITIES_POLL_MS = 180_000;
 
 function formatInteger(value?: number | null): string {
   return value === null || value === undefined ? '—' : new Intl.NumberFormat('pt-BR').format(value);
@@ -17,6 +21,10 @@ function formatInteger(value?: number | null): string {
 
 function formatPercent(value?: number | null): string {
   return value === null || value === undefined ? '—' : `${value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+}
+
+function isGovernorRunoff(uf?: string | null): boolean {
+  return Boolean(uf && GOVERNOR_RUNOFF_UFS.includes(uf as (typeof GOVERNOR_RUNOFF_UFS)[number]));
 }
 
 function unitFromFeature(feature: GeoFeature) {
@@ -32,9 +40,30 @@ function StatusPill({ status, text }: { status: 'ok' | 'loading' | 'warning'; te
   return <span className={`status-pill status-pill--${status}`}><Icon size={13} className={status === 'loading' ? 'spin' : ''} />{text}</span>;
 }
 
-function EmptyResults({ officeLabel, national, status, message }: { officeLabel: string; national: boolean; status: LoadState; message?: string }) {
-  if (!national && status === 'empty') {
-    return <div className="empty-state"><div className="empty-icon"><MapPin size={19} /></div><p className="eyebrow">DISPUTA ESTADUAL</p><h3>Escolha uma UF no mapa</h3><p>A votação de {officeLabel.toLowerCase()} é contabilizada separadamente em cada estado. Selecione um estado para ver candidaturas e votos oficiais.</p></div>;
+function EmptyResults({
+  officeLabel,
+  officeCode,
+  national,
+  selectedUF,
+  status,
+  message,
+  round,
+  roundTwoStarted,
+}: {
+  officeLabel: string;
+  officeCode: string;
+  national: boolean;
+  selectedUF: string | null;
+  status: LoadState;
+  message?: string;
+  round: ElectionRound;
+  roundTwoStarted: boolean;
+}) {
+  if (round === '2' && !roundTwoStarted) {
+    return <div className="empty-state"><div className="empty-icon"><Clock3 size={19} /></div><p className="eyebrow">SEGUNDO TURNO · 25 OUT</p><h3>A apuração começa às 17h</h3><p>O painel acompanhará os arquivos oficiais do TSE quando a totalização começar. Nenhum voto foi presumido ou estimado.</p></div>;
+  }
+  if (round === '2' && officeCode === '3' && selectedUF && !isGovernorRunoff(selectedUF)) {
+    return <div className="empty-state"><div className="empty-icon"><Info size={19} /></div><p className="eyebrow">SEM SEGUNDO TURNO NESTA UF</p><h3>{selectedUF} não tem disputa para governador no 2º turno</h3><p>Os resultados de governador desta unidade da Federação foram definidos no 1º turno.</p></div>;
   }
   if (status === 'loading') {
     return <div className="loading-state"><LoaderCircle className="spin" size={23} /><span>Consultando dados assinados do TSE…</span></div>;
@@ -42,35 +71,34 @@ function EmptyResults({ officeLabel, national, status, message }: { officeLabel:
   if (status === 'error') {
     return <div className="empty-state empty-state--error"><div className="empty-icon"><Info size={19} /></div><p className="eyebrow">FONTE TEMPORARIAMENTE INDISPONÍVEL</p><h3>Não foi possível carregar a apuração</h3><p>{message ?? 'Tente novamente. Os resultados são consultados diretamente na fonte oficial.'}</p><a href={TSE_RESULTS_URL} target="_blank" rel="noreferrer">Abrir Resultados do TSE <ExternalLink size={13} /></a></div>;
   }
-  return <div className="empty-state"><div className="empty-icon"><Clock3 size={19} /></div><p className="eyebrow">SEM RESULTADO PUBLICADO</p><h3>O TSE ainda não disponibilizou esta consulta</h3><p>Este painel não preenche lacunas com dados ilustrativos. Consulte novamente ou abra a fonte oficial.</p></div>;
+  if (!national && !selectedUF && status === 'empty') {
+    return <div className="empty-state"><div className="empty-icon"><MapPin size={19} /></div><p className="eyebrow">DISPUTA ESTADUAL</p><h3>Escolha uma UF no mapa</h3><p>A votação de {officeLabel.toLowerCase()} é contabilizada separadamente em cada estado. Selecione uma unidade para ver candidaturas e votos oficiais.</p></div>;
+  }
+  return <div className="empty-state"><div className="empty-icon"><Clock3 size={19} /></div><p className="eyebrow">SEM RESULTADO PUBLICADO</p><h3>O TSE ainda não disponibilizou esta consulta</h3><p>{message || 'Este painel não preenche lacunas com dados ilustrativos. Consulte novamente ou abra a fonte oficial.'}</p></div>;
 }
 
-function CandidateList({ result }: { result: ElectionResult }) {
+function CandidateList({ result, waitingForCount = false }: { result: ElectionResult; waitingForCount?: boolean }) {
   if (!result.candidates.length) {
-    return <EmptyResults officeLabel={result.cargoName} national={false} status="empty" />;
+    return <div className="empty-state empty-state--compact"><div className="empty-icon"><Info size={18} /></div><h3>Sem candidaturas publicadas neste arquivo</h3><p>Consulte novamente após a próxima atualização oficial.</p></div>;
   }
   const maximum = Math.max(1, result.candidates[0]?.votes ?? 0);
   return (
     <div className="candidate-list">
-      {result.candidates.map((candidate, index) => (
-        <CandidateRow key={candidate.id} candidate={candidate} index={index} maximum={maximum} />
-      ))}
+      {result.candidates.map((candidate, index) => {
+        const color = getCandidateColor(candidate);
+        return (
+          <article className={`candidate-row${index === 0 ? ' candidate-row--leader' : ''}`} key={candidate.id}>
+            <div className="candidate-rank" style={{ color }}>{String(index + 1).padStart(2, '0')}</div>
+            <div className="candidate-main">
+              <div className="candidate-name-line"><span className="candidate-color-dot" style={{ backgroundColor: color }} aria-hidden="true" /><strong>{candidate.ballotName}</strong><span className="party-tag">{candidate.party || `Nº ${candidate.number}`}</span></div>
+              <div className="candidate-meter"><span style={{ width: waitingForCount ? '0%' : `${Math.max(0, Math.min(100, candidate.votes / maximum * 100))}%`, backgroundColor: color }} /></div>
+              <div className="candidate-foot"><span className="candidate-votes">{waitingForCount ? 'Aguardando apuração' : `${formatInteger(candidate.votes)} votos`}</span><span className="candidate-status">{candidate.status || 'Candidatura'}</span></div>
+            </div>
+            <div className="candidate-percent" style={{ color }}>{waitingForCount ? '—' : formatPercent(candidate.percent)}</div>
+          </article>
+        );
+      })}
     </div>
-  );
-}
-
-function CandidateRow({ candidate, index, maximum }: { candidate: ElectionCandidate; index: number; maximum: number }) {
-  const color = getCandidateColor(candidate);
-  return (
-    <article className={`candidate-row${index === 0 ? ' candidate-row--leader' : ''}`}>
-      <div className="candidate-rank" style={{ color }}>{String(index + 1).padStart(2, '0')}</div>
-      <div className="candidate-main">
-        <div className="candidate-name-line"><span className="candidate-color-dot" style={{ backgroundColor: color }} aria-hidden="true" /><strong>{candidate.ballotName}</strong><span className="party-tag">{candidate.party || `Nº ${candidate.number}`}</span></div>
-        <div className="candidate-meter"><span style={{ width: `${Math.max(0, Math.min(100, candidate.votes / maximum * 100))}%`, backgroundColor: color }} /></div>
-        <div className="candidate-foot"><span className="candidate-votes">{formatInteger(candidate.votes)} votos</span><span className="candidate-status">{candidate.status || 'Candidatura'}</span></div>
-      </div>
-      <div className="candidate-percent" style={{ color }}>{formatPercent(candidate.percent)}</div>
-    </article>
   );
 }
 
@@ -79,10 +107,14 @@ function SummaryPanel({
   status,
   message,
   officeLabel,
+  officeCode,
+  round,
+  roundTwoStarted,
   national,
   selectedUF,
   selectedMunicipality,
   leaders,
+  leadersLoading,
   onRefresh,
   refreshing,
 }: {
@@ -90,68 +122,135 @@ function SummaryPanel({
   status: LoadState;
   message: string;
   officeLabel: string;
+  officeCode: string;
+  round: ElectionRound;
+  roundTwoStarted: boolean;
   national: boolean;
   selectedUF: string | null;
   selectedMunicipality: MunicipalityRef | null;
   leaders: Map<string, ElectionCandidate>;
+  leadersLoading: boolean;
   onRefresh: () => void;
   refreshing: boolean;
 }) {
   const areaTitle = selectedMunicipality?.name ?? (selectedUF ? FEDERAL_UNITS.find((unit) => unit.uf === selectedUF)?.name : 'Brasil');
+  const waitingForCount = Boolean(round === '2' && roundTwoStarted && result?.countedSections === 0);
+  const roundLabel = round === '1' ? '1º turno' : '2º turno';
   return (
     <aside className="results-panel">
       <div className="panel-heading">
-        <div><p className="eyebrow">APURAÇÃO OFICIAL</p><h2>{areaTitle ?? 'Brasil'}</h2><p className="panel-subtitle">{officeLabel} <span>·</span> 1º turno</p></div>
-        <button className="icon-button" type="button" onClick={onRefresh} aria-label="Atualizar resultados" title="Consultar o TSE novamente"><RefreshCw size={16} className={refreshing ? 'spin' : ''} /></button>
+        <div><p className="eyebrow">APURAÇÃO OFICIAL</p><h2>{areaTitle ?? 'Brasil'}</h2><p className="panel-subtitle">{officeLabel} <span>·</span> {roundLabel}</p></div>
+        <button className="icon-button" type="button" onClick={onRefresh} aria-label="Atualizar resultados" title="Consultar o TSE novamente" disabled={round === '2' && !roundTwoStarted}><RefreshCw size={16} className={refreshing ? 'spin' : ''} /></button>
       </div>
       {result ? (
         <>
-          <div className="result-meta"><StatusPill status="ok" text="ASSINATURA TSE VERIFICADA" /><span>Atualizado {result.updatedDate || '—'}{result.updatedTime ? ` · ${result.updatedTime}` : ''}</span></div>
-          <div className="stat-grid">
+          <div className="result-meta"><StatusPill status={waitingForCount ? 'warning' : 'ok'} text={waitingForCount ? 'AGUARDANDO APURAÇÃO' : 'ASSINATURA TSE VERIFICADA'} /><span>Atualizado {result.updatedDate || '—'}{result.updatedTime ? ` · ${result.updatedTime}` : ''}</span></div>
+          {waitingForCount && <div className="round-waiting-notice"><Clock3 size={14} /><span>Arquivo oficial do TSE recebido; ainda não há seções totalizadas nem votos apurados.</span></div>}
+          {round === '2' && roundTwoStarted && <p className="live-update-note"><span className="live-dot" /> Atualização automática a cada 30 segundos</p>}
+          {waitingForCount ? <div className="stat-grid">
+            <div className="stat-card"><span>Seções apuradas</span><strong>0 <small>/ {formatInteger(result.totalSections)}</small></strong><div className="stat-progress"><span style={{ width: '0%' }} /></div><em>Votos ainda não totalizados</em></div>
+            <div className="stat-card"><span>Totalização</span><strong>Aguardando</strong><em>Nenhum voto apurado ainda</em></div>
+          </div> : <div className="stat-grid">
             <div className="stat-card"><span>Seções apuradas</span><strong>{formatInteger(result.countedSections)} <small>/ {formatInteger(result.totalSections)}</small></strong><div className="stat-progress"><span style={{ width: `${Math.max(0, Math.min(100, result.countedPercent ?? 0))}%` }} /></div><em>{formatPercent(result.countedPercent)} totalizado</em></div>
             <div className="stat-card"><span>Comparecimento</span><strong>{formatPercent(result.turnout)}</strong><em>Abstenção {formatPercent(result.abstention)}</em></div>
-          </div>
+          </div>}
           <div className="candidate-heading"><h3>Votação nominal</h3><span>{result.candidates.length} candidaturas</span></div>
-          <CandidateList result={result} />
-          {result.validVotes !== null && <div className="valid-votes"><span>Votos válidos</span><strong>{formatInteger(result.validVotes)}</strong></div>}
+          <CandidateList result={result} waitingForCount={waitingForCount} />
+          {!waitingForCount && result.validVotes !== null && <div className="valid-votes"><span>Votos válidos</span><strong>{formatInteger(result.validVotes)}</strong></div>}
         </>
-      ) : national && !selectedUF && officeLabel !== 'Presidente' ? (
+      ) : round === '2' && !roundTwoStarted ? (
+        <EmptyResults officeLabel={officeLabel} officeCode={officeCode} national={!selectedUF} selectedUF={selectedUF} status="empty" message={message} round={round} roundTwoStarted={roundTwoStarted} />
+      ) : national && !selectedUF && round === '2' && officeCode === '3' ? (
         <div className="state-leaders">
-          <StatusPill status={leaders.size ? 'ok' : 'loading'} text={leaders.size ? `${leaders.size} UFs com dados` : 'CONSULTANDO UFs'} />
-          <div className="empty-state empty-state--compact"><div className="empty-icon"><MapPin size={19} /></div><h3>Uma disputa em cada estado</h3><p>Os percentuais não são somados nacionalmente. Selecione uma UF para consultar candidaturas, votos e apuração de {officeLabel.toLowerCase()}.</p></div>
-          <div className="state-leader-list">{[...leaders.entries()].slice(0, 6).map(([uf, candidate]) => <div key={uf}><span>{uf}</span><strong>{candidate.ballotName}</strong><em>{formatPercent(candidate.percent)}</em></div>)}</div>
+          <StatusPill status={leadersLoading ? 'loading' : leaders.size ? 'ok' : 'warning'} text={leadersLoading ? 'CONSULTANDO UFs' : `${leaders.size} UFs com disputa`} />
+          <div className="empty-state empty-state--compact"><div className="empty-icon"><MapPin size={19} /></div><h3>Governador: resultados por UF</h3><p>O 2º turno ocorre no Acre, Amazonas, Espírito Santo, Rio Grande do Norte, Tocantins e Distrito Federal. Selecione uma dessas UFs para consultar a apuração local.</p></div>
+          <div className="state-leader-list">{[...leaders.entries()].map(([uf, candidate]) => <div key={uf}><span>{uf}</span><strong>{candidate.ballotName}</strong><em>{formatPercent(candidate.percent)}</em></div>)}</div>
         </div>
-      ) : <EmptyResults officeLabel={officeLabel} national={!selectedUF} status={status} message={message} />}
+      ) : national && !selectedUF && officeCode !== '1' ? (
+        <div className="state-leaders">
+          <StatusPill status={leadersLoading ? 'loading' : leaders.size ? 'ok' : 'warning'} text={leadersLoading ? 'CONSULTANDO UFs' : `${leaders.size} UFs com dados`} />
+          <div className="empty-state empty-state--compact"><div className="empty-icon"><MapPin size={19} /></div><h3>Uma disputa em cada estado</h3><p>Os percentuais não são somados nacionalmente. Selecione uma UF para consultar candidaturas, votos e apuração de {officeLabel.toLowerCase()}.</p></div>
+          <div className="state-leader-list">{[...leaders.entries()].slice(0, 8).map(([uf, candidate]) => <div key={uf}><span>{uf}</span><strong>{candidate.ballotName}</strong><em>{formatPercent(candidate.percent)}</em></div>)}</div>
+        </div>
+      ) : (
+        <EmptyResults officeLabel={officeLabel} officeCode={officeCode} national={!selectedUF} selectedUF={selectedUF} status={status} message={message} round={round} roundTwoStarted={roundTwoStarted} />
+      )}
       <div className="source-stamp"><ShieldCheck size={14} /><span>Dados assinados pelo TSE</span><a href={TSE_RESULTS_URL} target="_blank" rel="noreferrer" aria-label="Abrir o portal oficial do TSE"><ArrowUpRight size={14} /></a></div>
     </aside>
   );
 }
 
+function interleaveMunicipalitiesByUF(values: MunicipalityRef[]): MunicipalityRef[] {
+  const groups = new Map<string, MunicipalityRef[]>();
+  values.forEach((municipality) => {
+    const group = groups.get(municipality.uf) ?? [];
+    group.push(municipality);
+    groups.set(municipality.uf, group);
+  });
+  const ordered: MunicipalityRef[] = [];
+  for (let index = 0; ordered.length < values.length; index += 1) {
+    let added = false;
+    FEDERAL_UNITS.forEach((unit) => {
+      const municipality = groups.get(unit.uf)?.[index];
+      if (municipality) {
+        ordered.push(municipality);
+        added = true;
+      }
+    });
+    if (!added) break;
+  }
+  return ordered;
+}
+
 export default function App() {
   const [officeCode, setOfficeCode] = useState('1');
+  const [round, setRound] = useState<ElectionRound>('1');
+  const [clock, setClock] = useState(Date.now());
   const [selectedUF, setSelectedUF] = useState<string | null>(null);
   const [selectedMunicipality, setSelectedMunicipality] = useState<MunicipalityRef | null>(null);
+  const [showAllMunicipalities, setShowAllMunicipalities] = useState(true);
   const [mapData, setMapData] = useState<FeatureCollection | null>(null);
   const [mapStatus, setMapStatus] = useState<LoadState>('loading');
+  const [mapMessage, setMapMessage] = useState('');
   const [result, setResult] = useState<ElectionResult | null>(null);
   const [resultStatus, setResultStatus] = useState<LoadState>('loading');
   const [resultMessage, setResultMessage] = useState('');
   const [municipalityIndex, setMunicipalityIndex] = useState<Map<string, MunicipalityRef> | null>(null);
+  const [municipalityIndexRound, setMunicipalityIndexRound] = useState<ElectionRound | null>(null);
+  const [municipalityIndexError, setMunicipalityIndexError] = useState('');
   const [leaders, setLeaders] = useState<Map<string, ElectionCandidate>>(new Map());
   const [leadersLoading, setLeadersLoading] = useState(false);
+  const [municipalityResults, setMunicipalityResults] = useState<Map<string, MunicipalityOverviewRow>>(new Map());
+  const [municipalityProgress, setMunicipalityProgress] = useState({ loaded: 0, failed: 0, completed: 0, isLoading: false });
   const [refreshKey, setRefreshKey] = useState(0);
+  const [municipalityRefreshKey, setMunicipalityRefreshKey] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
 
+  useEffect(() => {
+    if (round !== '2') return;
+    setClock(Date.now());
+    const timer = window.setInterval(() => setClock(Date.now()), 15_000);
+    return () => window.clearInterval(timer);
+  }, [round]);
+
+  const roundTwoStarted = round === '2' && clock >= ROUND_TWO_START;
   const office = OFFICE_OPTIONS.find((option) => option.code === officeCode) ?? OFFICE_OPTIONS[0];
   const national = !selectedUF;
-  const officeLabel = office.label;
+  const officeLabel = officeCode === '7' && selectedUF === 'DF' ? 'Deputado distrital' : office.label;
   const currentUnit = selectedUF ? FEDERAL_UNITS.find((unit) => unit.uf === selectedUF) : undefined;
+  const municipalityByIbge = useMemo(() => municipalityIndex ?? new Map<string, MunicipalityRef>(), [municipalityIndex]);
+  const canUseSecondRound = officeCode === '1' || officeCode === '3';
 
   useEffect(() => {
     let active = true;
     setMapStatus('loading');
     setMapData(null);
-    const request = selectedUF ? getMunicipalitiesMap(selectedUF) : getFederalUnitsMap();
+    setMapMessage('');
+    const request = selectedUF
+      ? getMunicipalitiesMap(selectedUF)
+      : showAllMunicipalities
+        ? getAllMunicipalitiesMap()
+        : getFederalUnitsMap();
     request.then((data) => {
       if (active) {
         setMapData(data);
@@ -160,42 +259,70 @@ export default function App() {
     }).catch((error: unknown) => {
       if (active) {
         setMapStatus('error');
-        setResultMessage(error instanceof Error ? error.message : 'Falha ao carregar o mapa.');
+        setMapMessage(error instanceof Error ? error.message : 'Falha ao carregar o mapa.');
       }
     });
     return () => { active = false; };
-  }, [selectedUF]);
+  }, [selectedUF, showAllMunicipalities]);
 
   useEffect(() => {
-    if (!selectedUF) {
+    if (!selectedUF && !showAllMunicipalities) {
       setMunicipalityIndex(null);
+      setMunicipalityIndexRound(null);
+      setMunicipalityIndexError('');
       return;
     }
     let active = true;
-    getMunicipalityIndex().then((index) => {
-      if (active) setMunicipalityIndex(index);
-    }).catch(() => {
-      if (active) setMunicipalityIndex(new Map());
+    setMunicipalityIndexRound(null);
+    setMunicipalityIndexError('');
+    if (showAllMunicipalities) setMunicipalityProgress((progress) => ({ ...progress, isLoading: true }));
+    getMunicipalityIndex(round).then((index) => {
+      if (active) {
+        setMunicipalityIndex(index);
+        setMunicipalityIndexRound(round);
+      }
+    }).catch((error: unknown) => {
+      if (active) {
+        setMunicipalityIndex(new Map());
+        setMunicipalityIndexRound(round);
+        setMunicipalityIndexError(error instanceof Error ? error.message : 'Não foi possível carregar o cadastro do TSE.');
+        setMunicipalityProgress({ loaded: 0, failed: 0, completed: 0, isLoading: false });
+      }
     });
     return () => { active = false; };
-  }, [selectedUF]);
+  }, [selectedUF, showAllMunicipalities, round]);
 
   useEffect(() => {
     let active = true;
+    if (round === '2' && !roundTwoStarted) {
+      setResult(null);
+      setResultStatus('empty');
+      setResultMessage('A apuração oficial do segundo turno começa em 25/10/2026, às 17h (horário de Brasília).');
+      setRefreshing(false);
+      return () => { active = false; };
+    }
+    if (round === '2' && officeCode === '3' && selectedUF && !isGovernorRunoff(selectedUF)) {
+      setResult(null);
+      setResultStatus('empty');
+      setResultMessage(`${selectedUF} não terá segundo turno para governador.`);
+      setRefreshing(false);
+      return () => { active = false; };
+    }
     if (!selectedUF && officeCode !== '1') {
       setResult(null);
       setResultStatus('empty');
-      setResultMessage('Selecione uma UF para consultar esta disputa.');
+      setResultMessage(round === '2' && officeCode === '3' ? '' : 'Selecione uma UF para consultar esta disputa.');
+      setRefreshing(false);
       return () => { active = false; };
     }
     setResultStatus('loading');
     setResultMessage('');
-    const request = getElectionResults({
+    getElectionResults({
       cargoCode: officeCode,
       uf: selectedUF ?? undefined,
       municipalityCode: selectedMunicipality?.tseCode,
-    });
-    request.then((value) => {
+      round,
+    }).then((value) => {
       if (active) {
         setResult(value);
         setResultStatus(value.candidates.length ? 'ready' : 'empty');
@@ -210,10 +337,10 @@ export default function App() {
       }
     });
     return () => { active = false; };
-  }, [officeCode, selectedUF, selectedMunicipality, refreshKey]);
+  }, [officeCode, round, roundTwoStarted, selectedUF, selectedMunicipality, refreshKey]);
 
   useEffect(() => {
-    if (selectedUF) {
+    if (selectedUF || (round === '2' && !roundTwoStarted)) {
       setLeaders(new Map());
       setLeadersLoading(false);
       return;
@@ -221,17 +348,20 @@ export default function App() {
     let active = true;
     let cursor = 0;
     const results = new Map<string, ElectionCandidate>();
+    const units = round === '2' && officeCode === '3'
+      ? FEDERAL_UNITS.filter((unit) => isGovernorRunoff(unit.uf))
+      : FEDERAL_UNITS;
     setLeaders(new Map());
     setLeadersLoading(true);
-    const states = FEDERAL_UNITS;
     const workers = Array.from({ length: 5 }, async () => {
       while (active) {
         const index = cursor++;
-        if (index >= states.length) return;
-        const unit = states[index];
+        if (index >= units.length) return;
+        const unit = units[index];
         try {
-          const response = await getElectionResults({ cargoCode: officeCode, uf: unit.uf });
-          if (response.candidates[0]) results.set(unit.uf, response.candidates[0]);
+          const response = await getElectionResults({ cargoCode: officeCode, uf: unit.uf, round });
+          const candidate = response.candidates[0];
+          if (candidate && candidate.votes > 0 && (response.countedSections ?? 0) > 0) results.set(unit.uf, candidate);
         } catch {
           // Uma UF indisponível não impede a consulta das demais.
         }
@@ -240,25 +370,139 @@ export default function App() {
     });
     Promise.all(workers).finally(() => { if (active) setLeadersLoading(false); });
     return () => { active = false; };
-  }, [officeCode, selectedUF, refreshKey]);
+  }, [officeCode, round, roundTwoStarted, selectedUF, refreshKey]);
 
-  const municipalityByIbge = useMemo(() => municipalityIndex ?? new Map<string, MunicipalityRef>(), [municipalityIndex]);
-  const getFeatureKey = useCallback((feature: GeoFeature) => {
-    if (!selectedUF) return unitFromFeature(feature)?.uf ?? getIbgeAreaCode(feature);
-    return getIbgeAreaCode(feature).padStart(7, '0');
-  }, [selectedUF]);
-  const getFeatureLabel = useCallback((feature: GeoFeature) => {
-    if (!selectedUF) return unitFromFeature(feature)?.name ?? 'Unidade da Federação';
-    const code = getIbgeAreaCode(feature).padStart(7, '0');
-    return municipalityByIbge.get(code)?.name ?? String(feature.properties.nm ?? `Município ${code}`);
+  const municipalityList = useMemo(() => {
+    const all = [...municipalityByIbge.values()];
+    return all
+      .filter((municipality) => !selectedUF || municipality.uf === selectedUF)
+      .sort((a, b) => a.uf.localeCompare(b.uf) || a.name.localeCompare(b.name, 'pt-BR'));
   }, [municipalityByIbge, selectedUF]);
 
-  const handleMapSelect = useCallback(async (feature: GeoFeature) => {
+  useEffect(() => {
+    if (!showAllMunicipalities || !municipalityIndex || municipalityIndexRound !== round) {
+      if (!showAllMunicipalities) {
+        setMunicipalityResults(new Map());
+        setMunicipalityProgress({ loaded: 0, failed: 0, completed: 0, isLoading: false });
+      }
+      return;
+    }
+    let active = true;
+    const scope = [...municipalityIndex.values()]
+      .filter((municipality) => !selectedUF || municipality.uf === selectedUF)
+      .sort((a, b) => a.uf.localeCompare(b.uf) || a.name.localeCompare(b.name, 'pt-BR'));
+    const results = new Map<string, MunicipalityOverviewRow>();
+    const requestable: MunicipalityRef[] = [];
+    let noRunoffCount = 0;
+    for (const municipality of scope) {
+      const noRunoff = round === '2' && officeCode === '3' && !isGovernorRunoff(municipality.uf);
+      results.set(municipality.ibgeCode, { municipality, candidate: null, countedSections: null, status: noRunoff ? 'no-runoff' : 'loading' });
+      if (noRunoff) noRunoffCount += 1;
+      else requestable.push(municipality);
+    }
     if (!selectedUF) {
+      const interleaved = interleaveMunicipalitiesByUF(requestable);
+      requestable.length = 0;
+      requestable.push(...interleaved);
+    }
+    setMunicipalityResults(new Map(results));
+    setMunicipalityProgress({ loaded: 0, failed: 0, completed: noRunoffCount, isLoading: false });
+    if (round === '2' && !roundTwoStarted) return () => { active = false; };
+    setMunicipalityProgress({ loaded: 0, failed: 0, completed: noRunoffCount, isLoading: requestable.length > 0 });
+
+    let cursor = 0;
+    let loaded = 0;
+    let failed = 0;
+    let completed = noRunoffCount;
+    const publishProgress = () => {
+      if (!active) return;
+      setMunicipalityResults(new Map(results));
+      setMunicipalityProgress({ loaded, failed, completed, isLoading: completed < scope.length });
+    };
+    const workers = Array.from({ length: Math.min(50, requestable.length) }, async () => {
+      while (active) {
+        const index = cursor++;
+        if (index >= requestable.length) return;
+        const municipality = requestable[index];
+        try {
+          const response = await getElectionResults({
+            cargoCode: officeCode,
+            uf: municipality.uf,
+            municipalityCode: municipality.tseCode,
+            round,
+          });
+          const candidate = response.candidates[0] ?? null;
+          if (candidate) {
+            results.set(municipality.ibgeCode, {
+              municipality,
+              candidate,
+              countedSections: response.countedSections,
+              status: 'ready',
+            });
+            loaded += 1;
+          } else {
+            results.set(municipality.ibgeCode, { municipality, candidate: null, countedSections: response.countedSections, status: 'error' });
+            failed += 1;
+          }
+        } catch {
+          results.set(municipality.ibgeCode, { municipality, candidate: null, countedSections: null, status: 'error' });
+          failed += 1;
+        }
+        completed += 1;
+        if (completed % 25 === 0 || completed === scope.length) publishProgress();
+      }
+    });
+    Promise.all(workers).then(() => {
+      if (active) {
+        setMunicipalityResults(new Map(results));
+        setMunicipalityProgress({ loaded, failed, completed, isLoading: false });
+      }
+    });
+    return () => { active = false; };
+  }, [showAllMunicipalities, municipalityIndex, municipalityIndexRound, selectedUF, officeCode, round, roundTwoStarted, municipalityRefreshKey]);
+
+  useEffect(() => {
+    if (round !== '2' || !roundTwoStarted) return;
+    if (showAllMunicipalities && municipalityProgress.isLoading) return;
+    const interval = showAllMunicipalities
+      ? ROUND_TWO_CITIES_POLL_MS
+      : resultStatus === 'error' ? 300_000 : ROUND_TWO_LOCAL_POLL_MS;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      setRefreshKey((value) => value + 1);
+      if (showAllMunicipalities) setMunicipalityRefreshKey((value) => value + 1);
+    }, interval);
+    return () => window.clearInterval(timer);
+  }, [round, roundTwoStarted, showAllMunicipalities, municipalityProgress.isLoading, resultStatus]);
+
+  const municipalWinners = useMemo(() => {
+    const resultMap = new Map<string, ElectionCandidate>();
+    municipalityResults.forEach((row, ibgeCode) => {
+      if (row.status === 'ready' && row.candidate && row.candidate.votes > 0 && (row.countedSections ?? 0) > 0) {
+        resultMap.set(ibgeCode, row.candidate);
+      }
+    });
+    return resultMap;
+  }, [municipalityResults]);
+
+  const getFeatureKey = useCallback((feature: GeoFeature) => {
+    if (!selectedUF && !showAllMunicipalities) return unitFromFeature(feature)?.uf ?? getIbgeAreaCode(feature);
+    return getIbgeAreaCode(feature).padStart(7, '0');
+  }, [selectedUF, showAllMunicipalities]);
+
+  const getFeatureLabel = useCallback((feature: GeoFeature) => {
+    if (!selectedUF && !showAllMunicipalities) return unitFromFeature(feature)?.name ?? 'Unidade da Federação';
+    const code = getIbgeAreaCode(feature).padStart(7, '0');
+    return municipalityByIbge.get(code)?.name ?? String(feature.properties.nome ?? feature.properties.nm ?? `Município ${code}`);
+  }, [municipalityByIbge, selectedUF, showAllMunicipalities]);
+
+  const handleMapSelect = useCallback(async (feature: GeoFeature) => {
+    if (!selectedUF && !showAllMunicipalities) {
       const unit = unitFromFeature(feature);
       if (unit) {
         setSelectedUF(unit.uf);
         setSelectedMunicipality(null);
+        setShowAllMunicipalities(false);
         setResultMessage('');
       }
       return;
@@ -267,44 +511,60 @@ export default function App() {
     let reference = municipalityByIbge.get(ibgeCode);
     if (!reference) {
       try {
-        const index = await getMunicipalityIndex();
+        const index = await getMunicipalityIndex(round);
         setMunicipalityIndex(index);
+        setMunicipalityIndexRound(round);
         reference = index.get(ibgeCode);
       } catch {
         setResultMessage('O TSE não disponibilizou o vínculo de códigos municipais neste momento.');
       }
     }
     if (reference) {
+      if (!selectedUF) setSelectedUF(reference.uf);
       setSelectedMunicipality(reference);
+      setShowAllMunicipalities(false);
       setResultMessage('');
     }
-  }, [municipalityByIbge, selectedUF]);
+  }, [municipalityByIbge, selectedUF, showAllMunicipalities, round]);
 
   const refresh = () => {
+    if (round === '2' && !roundTwoStarted) return;
     setRefreshing(true);
     setRefreshKey((value) => value + 1);
+    if (showAllMunicipalities) setMunicipalityRefreshKey((value) => value + 1);
   };
   const returnToCountry = () => {
     setSelectedUF(null);
     setSelectedMunicipality(null);
+    setShowAllMunicipalities(true);
     setResultStatus('loading');
     setResultMessage('');
   };
   const returnToState = () => {
     setSelectedMunicipality(null);
+    setShowAllMunicipalities(false);
     setResultMessage('');
   };
-  const regionLabel = selectedMunicipality?.name ?? currentUnit?.name ?? 'Brasil';
-  const legendLeaders = useMemo(() => {
+  const regionLabel = showAllMunicipalities && !selectedUF ? 'Brasil · municípios' : selectedMunicipality?.name ?? currentUnit?.name ?? 'Brasil';
+
+  const legendCandidates = useMemo(() => {
+    const candidates = showAllMunicipalities
+      ? [...municipalityResults.values()].filter((row) => row.candidate && row.status === 'ready' && row.candidate.votes > 0).map((row) => row.candidate as ElectionCandidate)
+      : [...leaders.values()];
     const counts = new Map<string, { candidate: ElectionCandidate; count: number }>();
-    leaders.forEach((candidate) => {
+    candidates.forEach((candidate) => {
       const entry = counts.get(candidate.id);
       if (entry) entry.count += 1;
       else counts.set(candidate.id, { candidate, count: 1 });
     });
     return [...counts.values()].sort((a, b) => b.count - a.count).slice(0, 3);
-  }, [leaders]);
-  const showResultLoad = resultStatus === 'loading' || resultStatus === 'error';
+  }, [leaders, municipalityResults, showAllMunicipalities]);
+
+  const showCityMode = () => {
+    setShowAllMunicipalities((value) => !value);
+    setSelectedMunicipality(null);
+  };
+  const cityWinners = selectedUF || showAllMunicipalities;
 
   return (
     <div className="app-shell">
@@ -315,68 +575,119 @@ export default function App() {
           <span className="brand-divider" />
           <span className="brand-context">OBSERVATÓRIO ELEITORAL<br /><b>BRASIL · 2026</b></span>
         </a>
-        <div className="topbar-right"><span className="topbar-label"><span className="live-dot" /> DADOS ABERTOS</span><a className="topbar-link" href={TSE_RESULTS_URL} target="_blank" rel="noreferrer">Portal do TSE <ArrowUpRight size={14} /></a></div>
+        <div className="topbar-right"><span className="topbar-label"><span className="live-dot" /> {round === '2' && roundTwoStarted ? 'AO VIVO · TSE' : round === '2' ? '2º TURNO · 25 OUT' : 'DADOS ABERTOS'}</span><a className="topbar-link" href={TSE_RESULTS_URL} target="_blank" rel="noreferrer">Portal do TSE <ArrowUpRight size={14} /></a></div>
       </header>
 
       <main>
         <section className="hero">
           <div className="hero-copy">
-            <p className="eyebrow"><span className="eyebrow-line" /> ELEIÇÕES GERAIS · PRIMEIRO TURNO</p>
+            <p className="eyebrow"><span className="eyebrow-line" /> ELEIÇÕES GERAIS · {round === '1' ? 'PRIMEIRO' : 'SEGUNDO'} TURNO</p>
             <h1>A eleição,<br /><em>território por território.</em></h1>
-            <p className="hero-description">Explore os resultados oficiais de 2026 da escala nacional ao seu município.</p>
+            <p className="hero-description">Explore os resultados oficiais de 2026 do Brasil à sua cidade — agora com navegação livre pelo mapa.</p>
           </div>
           <div className="hero-status">
             <div className="hero-status-kicker"><Activity size={14} /> CENTRAL DE APURAÇÃO</div>
-            <div className="hero-status-main"><span className="hero-status-number">01</span><div><strong>1º turno</strong><span>04 OUT 2026</span></div></div>
-            <div className="hero-status-foot"><StatusPill status="ok" text="DADOS OFICIAIS DISPONÍVEIS" /><span>2º turno · 25 out</span></div>
+            <div className="hero-status-main"><span className="hero-status-number">{round === '1' ? '01' : '02'}</span><div><strong>{round === '1' ? '1º turno' : '2º turno'}</strong><span>{round === '1' ? '04 OUT 2026' : '25 OUT 2026 · 17H'}</span></div></div>
+        <div className="hero-status-foot"><StatusPill status={round === '2' && !roundTwoStarted ? 'warning' : 'ok'} text={round === '2' && !roundTwoStarted ? 'AGUARDANDO APURAÇÃO' : round === '2' ? 'DADOS DO TSE · ATUALIZAÇÃO AUTOMÁTICA' : 'DADOS OFICIAIS DISPONÍVEIS'} /><span>{round === '1' ? '2º turno · 25 out' : roundTwoStarted ? showAllMunicipalities ? 'Cidades · lote progressivo' : 'Consulta local · 30s' : 'Início · 17h BRT'}</span></div>
           </div>
         </section>
 
-        <section className="notice-bar" aria-label="Status dos resultados">
+        <section className={`notice-bar${round === '2' ? ' notice-bar--round-two' : ''}`} aria-label="Status dos resultados">
           <span className="notice-icon"><Info size={16} /></span>
-          <p><strong>Fonte oficial do TSE.</strong> Os resultados exibidos são do 1º turno. O 2º turno está previsto para 25 de outubro e ainda não tem apuração publicada.</p>
+          {round === '1'
+            ? <p><strong>Fonte oficial do TSE.</strong> Resultados do 1º turno de 2026. O 2º turno será acompanhado automaticamente a partir de 25 de outubro, às 17h (horário de Brasília).</p>
+            : roundTwoStarted
+              ? <p><strong>2º turno em acompanhamento.</strong> A consulta da localidade é atualizada a cada 30 segundos; o mapa completo por municípios é recarregado em lotes progressivos, respeitando o limite do TSE.</p>
+              : <p><strong>2º turno previsto para 25/10, às 17h (Brasília).</strong> A apuração ainda não começou; arquivos zerados do TSE não são mostrados como votos apurados. O acompanhamento automático começará no horário oficial.</p>}
           <a href={TSE_OPEN_DATA_URL} target="_blank" rel="noreferrer">Dados abertos <ArrowUpRight size={14} /></a>
         </section>
 
         <section className="control-row">
           <div className="breadcrumbs" aria-label="Navegação territorial">
             <button type="button" className={!selectedUF ? 'crumb is-current' : 'crumb'} onClick={returnToCountry}>Brasil</button>
-            {currentUnit && <><ChevronRight size={13} /><button type="button" className={!selectedMunicipality ? 'crumb is-current' : 'crumb'} onClick={returnToState}>{currentUnit.uf}</button></>}
+            {currentUnit && <><ChevronRight size={13} /><button type="button" className={!selectedMunicipality && !showAllMunicipalities ? 'crumb is-current' : 'crumb'} onClick={returnToState}>{currentUnit.uf}</button></>}
+            {showAllMunicipalities && <><ChevronRight size={13} /><span className="crumb is-current">Municípios</span></>}
             {selectedMunicipality && <><ChevronRight size={13} /><span className="crumb is-current">{selectedMunicipality.name}</span></>}
           </div>
           <div className="filters">
             <label htmlFor="office-select">CARGO</label>
-            <div className="select-wrap"><select id="office-select" value={officeCode} onChange={(event) => { setOfficeCode(event.target.value); setSelectedMunicipality(null); }}>
+            <div className="select-wrap"><select id="office-select" value={officeCode} onChange={(event) => { const nextCode = event.target.value; setOfficeCode(nextCode); setSelectedMunicipality(null); if (nextCode !== '1' && nextCode !== '3') setRound('1'); }}>
               {OFFICE_OPTIONS.map((option) => <option key={option.code} value={option.code}>{option.label}</option>)}
             </select><ChevronDown size={15} aria-hidden="true" /></div>
-            <div className="round-switch"><span className="round-switch-active">1º</span><span className="round-switch-next" title="O segundo turno ainda não tem apuração publicada">2º <small>25 OUT</small></span></div>
+            <div className="round-switch" role="group" aria-label="Turno da eleição">
+              <button type="button" className={round === '1' ? 'round-option is-active' : 'round-option'} onClick={() => setRound('1')} aria-pressed={round === '1'}>1º</button>
+              <button type="button" className={round === '2' ? 'round-option is-active' : 'round-option'} onClick={() => setRound('2')} disabled={!canUseSecondRound} aria-pressed={round === '2'} title={canUseSecondRound ? 'Consultar o segundo turno' : 'O segundo turno está disponível para Presidente e Governador'}>2º <small>25 OUT</small></button>
+            </div>
           </div>
         </section>
 
         <section className="workspace">
           <div className="map-panel">
             <div className="map-panel-heading">
-              <div><div className="map-title-line"><MapPin size={16} /><h2>{regionLabel}</h2>{selectedUF && <span className="unit-chip">{selectedUF}</span>}</div><p>{selectedUF ? 'Selecione um município para detalhar a votação.' : 'Selecione um estado para explorar os resultados locais.'}</p></div>
-              <div className="map-control"><span className="map-scale-label">{selectedUF ? `${mapData?.features.length ?? '—'} MUNICÍPIOS` : '26 ESTADOS + DF'}</span><button type="button" className="map-back" onClick={selectedMunicipality ? returnToState : returnToCountry} title={selectedUF ? 'Voltar ao Brasil' : 'Brasil'} disabled={!selectedUF && !selectedMunicipality}>{selectedUF ? <ArrowLeft size={15} /> : <MapPin size={15} />}</button></div>
+              <div><div className="map-title-line"><MapPin size={16} /><h2>{regionLabel}</h2>{selectedUF && <span className="unit-chip">{selectedUF}</span>}</div><p>{showAllMunicipalities ? 'Cada município tem a cor do líder local; a intensidade representa seu percentual de votos. Selecione uma cidade ou use a lista.' : selectedUF ? 'Selecione um município para detalhar a votação.' : 'Selecione uma unidade da Federação ou abra os resultados por cidade.'}</p></div>
+              <div className="map-control">
+                <span className="map-scale-label">{showAllMunicipalities ? `${formatInteger(mapData?.features.length ?? 5571)} CIDADES` : selectedUF ? `${formatInteger(mapData?.features.length ?? 0)} MUNICÍPIOS` : '27 UFs · INCLUI DF'}</span>
+                <button type="button" className={`map-mode-toggle${showAllMunicipalities ? ' is-active' : ''}`} onClick={showCityMode} aria-pressed={showAllMunicipalities} title={showAllMunicipalities ? 'Voltar à visualização territorial' : selectedUF ? 'Ver resultados de todos os municípios desta UF' : 'Ver resultados de todos os municípios do Brasil'}><Layers3 size={14} /><span>{showAllMunicipalities ? 'Mapa por UF' : selectedUF ? 'Resultados municipais' : 'Todas as cidades'}</span></button>
+              </div>
             </div>
             <div className={`map-stage${mapStatus === 'loading' ? ' map-stage--loading' : ''}`}>
               {mapData && mapStatus === 'ready' ? (
                 <BrazilMap
                   data={mapData}
-                  level={selectedUF ? 'municipality' : 'state'}
+                  level={cityWinners ? 'municipality' : 'state'}
                   getKey={getFeatureKey}
                   getLabel={getFeatureLabel}
-                  winners={selectedUF ? undefined : leaders}
+                  winners={showAllMunicipalities ? municipalWinners : selectedUF ? undefined : leaders}
                   selectedKey={selectedUF && selectedMunicipality ? selectedMunicipality.ibgeCode : undefined}
                   onSelect={handleMapSelect}
                 />
-              ) : <div className="map-placeholder">{mapStatus === 'loading' ? <><LoaderCircle size={24} className="spin" /><span>Carregando malha oficial do IBGE…</span></> : <><Info size={20} /><span>Não foi possível carregar o mapa.</span></>}</div>}
+              ) : <div className="map-placeholder">{mapStatus === 'loading' ? <><LoaderCircle size={24} className="spin" /><span>Carregando malha oficial do IBGE…</span></> : <><Info size={20} /><span>{mapMessage || 'Não foi possível carregar o mapa.'}</span></>}</div>}
               {selectedUF && selectedMunicipality && <div className="map-selection"><span className="selection-pin"><MapPin size={14} /></span><div><strong>{selectedMunicipality.name}</strong><span>{selectedMunicipality.uf} · código TSE {selectedMunicipality.tseCode}</span></div></div>}
             </div>
-            <div className="map-footer"><div className="map-legend">{selectedUF ? <><span className="legend-swatch" /><span>Municípios · clique para consultar</span></> : <><span className="legend-label">LÍDER POR UF</span><div className="map-legend-items">{legendLeaders.map(({ candidate }) => <span className="map-legend-item" key={candidate.id} title={candidate.ballotName}><i style={{ backgroundColor: getCandidateColor(candidate) }} />{candidate.ballotName}</span>)}</div></>}</div><div className="map-source"><Database size={13} /> MALHA: IBGE{leadersLoading && !selectedUF ? <span className="loading-tiny"><LoaderCircle size={12} className="spin" /> TSE</span> : null}</div></div>
+            <div className="map-footer">
+              <div className="map-legend">
+                {legendCandidates.length ? <><span className="legend-label">{showAllMunicipalities ? 'LÍDER POR CIDADE' : selectedUF ? 'LÍDERES' : 'LÍDER POR UF'}</span><div className="map-legend-items">{legendCandidates.map(({ candidate }) => <span className="map-legend-item" key={candidate.id} title={candidate.ballotName}><i style={{ backgroundColor: getCandidateColor(candidate) }} />{candidate.ballotName}</span>)}</div>{showAllMunicipalities && <span className="map-legend-intensity">TOM = % DO LÍDER</span>}</> : <><span className="legend-swatch" /><span>{round === '2' && !roundTwoStarted ? 'Apuração começa em 25/10 · 17h' : showAllMunicipalities ? 'Aguardando resultados municipais' : selectedUF ? 'Municípios · clique para consultar' : 'Líder por UF'}</span>{showAllMunicipalities && <span className="map-legend-intensity">TOM = % DO LÍDER</span>}</>}
+              </div>
+              <div className="map-source"><Database size={13} /> MALHA: IBGE · 2025{(leadersLoading || municipalityProgress.isLoading) && <span className="loading-tiny"><LoaderCircle size={12} className="spin" /> TSE</span>}</div>
+            </div>
           </div>
 
-          <SummaryPanel result={result} status={resultStatus} message={resultMessage} officeLabel={officeLabel} national={national} selectedUF={selectedUF} selectedMunicipality={selectedMunicipality} leaders={leaders} onRefresh={refresh} refreshing={refreshing || showResultLoad} />
+          {showAllMunicipalities ? (
+            <MunicipalityResultsPanel
+              rows={municipalityList.map((municipality) => municipalityResults.get(municipality.ibgeCode) ?? { municipality, candidate: null, countedSections: null, status: 'loading' as const })}
+              loaded={municipalityProgress.loaded}
+              failed={municipalityProgress.failed}
+              completed={municipalityProgress.completed}
+              isLoading={municipalityProgress.isLoading}
+              indexLoading={showAllMunicipalities && municipalityIndexRound !== round && !municipalityIndexError}
+              indexError={municipalityIndexError}
+              expectedTotal={municipalityList.length || mapData?.features.length || (!selectedUF ? 5571 : 0)}
+              round={round}
+              roundTwoStarted={roundTwoStarted}
+              onSelect={(municipality) => {
+                setSelectedUF(municipality.uf);
+                setSelectedMunicipality(municipality);
+                setShowAllMunicipalities(false);
+              }}
+            />
+          ) : (
+            <SummaryPanel
+              result={result}
+              status={resultStatus}
+              message={resultMessage}
+              officeLabel={officeLabel}
+              officeCode={officeCode}
+              round={round}
+              roundTwoStarted={roundTwoStarted}
+              national={national}
+              selectedUF={selectedUF}
+              selectedMunicipality={selectedMunicipality}
+              leaders={leaders}
+              leadersLoading={leadersLoading}
+              onRefresh={refresh}
+              refreshing={refreshing || resultStatus === 'loading'}
+            />
+          )}
         </section>
 
         <section className="bottom-strip">

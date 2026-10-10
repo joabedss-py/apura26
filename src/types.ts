@@ -46,10 +46,18 @@ export interface ElectionResult {
 }
 
 export type LoadState = 'loading' | 'ready' | 'empty' | 'error';
+export type ElectionRound = '1' | '2';
 
 export interface MunicipalityRef {
   ibgeCode: string;
   tseCode: string;
   name: string;
   uf: string;
+}
+
+export interface MunicipalityOverviewRow {
+  municipality: MunicipalityRef;
+  candidate: ElectionCandidate | null;
+  countedSections: number | null;
+  status: 'loading' | 'ready' | 'error' | 'no-runoff';
 }

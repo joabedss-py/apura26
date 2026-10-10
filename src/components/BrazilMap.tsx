@@ -1,4 +1,5 @@
-import { useMemo } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { LocateFixed, Minus, Plus } from 'lucide-react';
 import type { ElectionCandidate, FeatureCollection, GeoFeature, Position } from '../types';
 import { getCandidateColor } from '../services/colors';
 
@@ -12,13 +13,31 @@ interface BrazilMapProps {
   onSelect: (feature: GeoFeature) => void;
 }
 
+interface MapPoint {
+  x: number;
+  y: number;
+}
+
+interface ViewTransform {
+  scale: number;
+  tx: number;
+  ty: number;
+}
+
+interface ProjectedFeature {
+  source: GeoFeature;
+  key: string;
+  label: string;
+  path: string;
+  centerX: number;
+  centerY: number;
+}
+
 const WIDTH = 860;
 const HEIGHT = 560;
-
-function colorFor(candidate?: ElectionCandidate): string {
-  if (!candidate) return '#29413b';
-  return getCandidateColor(candidate);
-}
+const voteFormatter = new Intl.NumberFormat('pt-BR');
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 8;
 
 function collectPositions(value: unknown, output: Position[]): void {
   if (!Array.isArray(value)) return;
@@ -49,6 +68,7 @@ function buildProjection(features: GeoFeature[]) {
   const positions: Position[] = [];
   features.forEach((feature) => collectPositions(feature.geometry.coordinates, positions));
   if (!positions.length) return (_point: Position) => [WIDTH / 2, HEIGHT / 2] as const;
+
   let minX = Infinity;
   let maxX = -Infinity;
   let minY = Infinity;
@@ -75,66 +95,250 @@ function pathFor(feature: GeoFeature, project: (point: Position) => readonly [nu
   }).join(' ') + ' Z').join(' ');
 }
 
+function colorFor(candidate?: ElectionCandidate): string {
+  return candidate ? getCandidateColor(candidate) : '#29413b';
+}
+
+function clientToMapPoint(svg: SVGSVGElement, clientX: number, clientY: number): MapPoint {
+  const point = svg.createSVGPoint();
+  point.x = clientX;
+  point.y = clientY;
+  const matrix = svg.getScreenCTM()?.inverse();
+  if (!matrix) return { x: WIDTH / 2, y: HEIGHT / 2 };
+  const result = point.matrixTransform(matrix);
+  return { x: result.x, y: result.y };
+}
+
+function clampTransform(value: ViewTransform): ViewTransform {
+  const scale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value.scale));
+  const maxX = WIDTH * (scale - 1);
+  const maxY = HEIGHT * (scale - 1);
+  return {
+    scale,
+    tx: Math.min(0, Math.max(-maxX, value.tx)),
+    ty: Math.min(0, Math.max(-maxY, value.ty)),
+  };
+}
+
+const MapFeature = memo(function MapFeature({
+  feature,
+  level,
+  winner,
+  selected,
+  onSelect,
+}: {
+  feature: ProjectedFeature;
+  level: 'state' | 'municipality';
+  winner?: ElectionCandidate;
+  selected: boolean;
+  onSelect: (feature: GeoFeature) => void;
+}) {
+  const fill = selected ? '#53e0a1' : colorFor(winner);
+  const share = winner ? Math.max(0, Math.min(100, winner.percent)) / 100 : 0;
+  const fillOpacity = selected ? 1 : winner ? 0.3 + share * 0.6 : 0.25;
+  const label = winner
+    ? `${feature.label}. Mais votado: ${winner.ballotName}, ${voteFormatter.format(winner.votes)} votos, ${winner.percent.toFixed(2)} por cento.`
+    : `${feature.label}. Selecione para consultar.`;
+  return (
+    <g className="map-feature-group">
+      <path
+        d={feature.path}
+        className={`map-feature${selected ? ' is-selected' : ''}`}
+        fill={fill}
+        fillOpacity={fillOpacity}
+        stroke={selected ? '#e6fff1' : '#8aa79b'}
+        strokeWidth={selected ? 1.9 : level === 'state' ? 1.15 : 0.62}
+        vectorEffect="non-scaling-stroke"
+        tabIndex={0}
+        role="button"
+        aria-label={label}
+        onClick={() => onSelect(feature.source)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            onSelect(feature.source);
+          }
+        }}
+      >
+        <title>{winner ? `${feature.label} · ${winner.ballotName} · ${voteFormatter.format(winner.votes)} votos (${winner.percent.toFixed(2)}%)` : feature.label}</title>
+      </path>
+      {level === 'state' && (
+        <text x={feature.centerX} y={feature.centerY} className="map-unit-label" textAnchor="middle" dominantBaseline="central" aria-hidden="true">
+          {feature.key.toUpperCase()}
+        </text>
+      )}
+    </g>
+  );
+});
+
 export default function BrazilMap({ data, level, getKey, getLabel, winners, selectedKey, onSelect }: BrazilMapProps) {
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const pointersRef = useRef(new Map<number, MapPoint>());
+  const gestureRef = useRef<{ type: 'pan'; start: MapPoint; view: ViewTransform } | { type: 'pinch'; startDistance: number; anchor: MapPoint } | null>(null);
+  const suppressClickRef = useRef(false);
+  const gestureMovedRef = useRef(false);
+  const [view, setView] = useState<ViewTransform>({ scale: 1, tx: 0, ty: 0 });
+  const viewRef = useRef(view);
+  viewRef.current = view;
+
   const projection = useMemo(() => buildProjection(data.features), [data]);
-  const features = useMemo(() => data.features.map((feature) => {
+  const features = useMemo<ProjectedFeature[]>(() => data.features.map((feature) => {
     const key = getKey(feature);
     const label = getLabel(feature);
-    const winner = winners?.get(key);
-    const isSelected = key === selectedKey;
     const points = ringsFor(feature).flat();
-    const centerPoint = points.length ? points.reduce((sum, point) => [sum[0] + point[0] / points.length, sum[1] + point[1] / points.length] as Position, [0, 0] as Position) : [0, 0] as Position;
+    const centerPoint = points.length
+      ? points.reduce((sum, point) => [sum[0] + point[0] / points.length, sum[1] + point[1] / points.length] as Position, [0, 0] as Position)
+      : [0, 0] as Position;
     const [centerX, centerY] = projection(centerPoint);
-    return {
-      source: feature,
-      key,
-      label,
-      winner,
-      isSelected,
-      path: pathFor(feature, projection),
-      centerX,
-      centerY,
-    };
-  }), [data, getKey, getLabel, projection, selectedKey, winners]);
+    return { source: feature, key, label, path: pathFor(feature, projection), centerX, centerY };
+  }), [data, getKey, getLabel, projection]);
+
+  const updateView = useCallback((next: ViewTransform) => {
+    const clamped = clampTransform(next);
+    viewRef.current = clamped;
+    setView(clamped);
+  }, []);
+
+  useEffect(() => {
+    updateView({ scale: 1, tx: 0, ty: 0 });
+  }, [data, level, updateView]);
+
+  const zoomAt = useCallback((anchor: MapPoint, factor: number) => {
+    const current = viewRef.current;
+    const scale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, current.scale * factor));
+    const ratio = scale / current.scale;
+    updateView({
+      scale,
+      tx: anchor.x - (anchor.x - current.tx) * ratio,
+      ty: anchor.y - (anchor.y - current.ty) * ratio,
+    });
+  }, [updateView]);
+
+  const zoomAtCenter = useCallback((factor: number) => zoomAt({ x: WIDTH / 2, y: HEIGHT / 2 }, factor), [zoomAt]);
+
+  const handlePointerDown = (event: React.PointerEvent<SVGSVGElement>) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    const svg = event.currentTarget;
+    svg.setPointerCapture(event.pointerId);
+    const point = clientToMapPoint(svg, event.clientX, event.clientY);
+    const pointers = pointersRef.current;
+    if (pointers.size === 0) gestureMovedRef.current = false;
+    pointers.set(event.pointerId, point);
+    if (pointers.size === 1) {
+      gestureRef.current = { type: 'pan', start: point, view: viewRef.current };
+    } else if (pointers.size >= 2) {
+      const [first, second] = [...pointers.values()].slice(-2);
+      const midpoint = { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
+      const current = viewRef.current;
+      const worldAnchor = { x: (midpoint.x - current.tx) / current.scale, y: (midpoint.y - current.ty) / current.scale };
+      const distance = Math.max(1, Math.hypot(second.x - first.x, second.y - first.y));
+      gestureRef.current = { type: 'pinch', startDistance: distance, anchor: worldAnchor };
+    }
+  };
+
+  const handlePointerMove = (event: React.PointerEvent<SVGSVGElement>) => {
+    const svg = event.currentTarget;
+    if (!pointersRef.current.has(event.pointerId)) return;
+    const point = clientToMapPoint(svg, event.clientX, event.clientY);
+    pointersRef.current.set(event.pointerId, point);
+    const gesture = gestureRef.current;
+    if (!gesture) return;
+
+    if (pointersRef.current.size >= 2 && gesture.type === 'pinch') {
+      gestureMovedRef.current = true;
+      const [first, second] = [...pointersRef.current.values()].slice(-2);
+      const midpoint = { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
+      const distance = Math.max(1, Math.hypot(second.x - first.x, second.y - first.y));
+      const scale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, viewRef.current.scale * distance / gesture.startDistance));
+      if (Math.abs(scale - viewRef.current.scale) > 0.003) suppressClickRef.current = true;
+      updateView({ scale, tx: midpoint.x - gesture.anchor.x * scale, ty: midpoint.y - gesture.anchor.y * scale });
+      return;
+    }
+
+    if (gesture.type === 'pan') {
+      const dx = point.x - gesture.start.x;
+      const dy = point.y - gesture.start.y;
+      if (Math.hypot(dx, dy) > 4) {
+        suppressClickRef.current = true;
+        gestureMovedRef.current = true;
+      }
+      updateView({ scale: gesture.view.scale, tx: gesture.view.tx + dx, ty: gesture.view.ty + dy });
+    }
+  };
+
+  const handlePointerUp = (event: React.PointerEvent<SVGSVGElement>) => {
+    const svg = event.currentTarget;
+    pointersRef.current.delete(event.pointerId);
+    if (svg.hasPointerCapture(event.pointerId)) svg.releasePointerCapture(event.pointerId);
+    if (pointersRef.current.size === 1) {
+      const [pointerId, point] = [...pointersRef.current.entries()][0];
+      if (svg.hasPointerCapture(pointerId)) gestureRef.current = { type: 'pan', start: point, view: viewRef.current };
+    } else if (pointersRef.current.size === 0) {
+      gestureRef.current = null;
+      if (gestureMovedRef.current) {
+        suppressClickRef.current = true;
+        window.setTimeout(() => { suppressClickRef.current = false; }, 80);
+      }
+      gestureMovedRef.current = false;
+    }
+  };
+
+  const handleWheel = (event: React.WheelEvent<SVGSVGElement>) => {
+    event.preventDefault();
+    const point = clientToMapPoint(event.currentTarget, event.clientX, event.clientY);
+    zoomAt(point, event.deltaY < 0 ? 1.16 : 1 / 1.16);
+  };
 
   return (
-    <svg className={`brazil-map brazil-map--${level}`} viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label={level === 'state' ? 'Mapa interativo do Brasil por estado' : 'Mapa interativo de municípios'}>
-      <defs>
-        <pattern id="mapGrid" width="36" height="36" patternUnits="userSpaceOnUse">
-          <path d="M 36 0 L 0 0 0 36" fill="none" stroke="#b6dfce" strokeOpacity=".045" strokeWidth="1" />
-        </pattern>
-      </defs>
-      <rect width={WIDTH} height={HEIGHT} fill="url(#mapGrid)" />
-      {features.map((feature) => (
-        <g key={feature.key} className="map-feature-group">
-          <path
-            d={feature.path}
-            className={`map-feature${feature.isSelected ? ' is-selected' : ''}`}
-            fill={feature.isSelected ? '#53e0a1' : colorFor(feature.winner)}
-            fillOpacity={feature.winner || feature.isSelected ? 0.82 : 0.52}
-            stroke={feature.isSelected ? '#e6fff1' : '#8aa79b'}
-            strokeWidth={feature.isSelected ? 1.9 : level === 'state' ? 1.15 : 0.62}
-            vectorEffect="non-scaling-stroke"
-            tabIndex={0}
-            role="button"
-            aria-label={feature.winner ? `${feature.label}. Mais votado: ${feature.winner.ballotName}, ${feature.winner.percent.toFixed(2)} por cento.` : `${feature.label}. Selecionar no mapa.`}
-            onClick={() => onSelect(feature.source)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault();
-                onSelect(feature.source);
-              }
-            }}
-          >
-            <title>{feature.winner ? `${feature.label} · ${feature.winner.ballotName} (${feature.winner.percent.toFixed(2)}%)` : feature.label}</title>
-          </path>
-          {level === 'state' && feature.key && (
-            <text x={feature.centerX} y={feature.centerY} className="map-unit-label" textAnchor="middle" dominantBaseline="central" aria-hidden="true">
-              {feature.key.toUpperCase()}
-            </text>
-          )}
+    <div className="map-viewport">
+      <svg
+        ref={svgRef}
+        className={`brazil-map brazil-map--${level}`}
+        viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+        role="group"
+        aria-label={level === 'state' ? 'Mapa interativo do Brasil por estado. Arraste para mover; use mais e menos para aproximar.' : 'Mapa interativo de municípios. Arraste para mover; use mais e menos para aproximar.'}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        onWheel={handleWheel}
+        onClickCapture={(event) => {
+          if (suppressClickRef.current) {
+            event.preventDefault();
+            event.stopPropagation();
+            suppressClickRef.current = false;
+          }
+        }}
+        onDoubleClick={(event) => {
+          event.preventDefault();
+          zoomAt(clientToMapPoint(event.currentTarget, event.clientX, event.clientY), 1.45);
+        }}
+      >
+        <defs>
+          <pattern id="mapGrid" width="36" height="36" patternUnits="userSpaceOnUse">
+            <path d="M 36 0 L 0 0 0 36" fill="none" stroke="#b6dfce" strokeOpacity=".045" strokeWidth="1" />
+          </pattern>
+        </defs>
+        <g transform={`translate(${view.tx} ${view.ty}) scale(${view.scale})`}>
+          <rect width={WIDTH} height={HEIGHT} fill="url(#mapGrid)" />
+          {features.map((feature) => (
+            <MapFeature
+              key={feature.key}
+              feature={feature}
+              level={level}
+              winner={winners?.get(feature.key)}
+              selected={feature.key === selectedKey}
+              onSelect={onSelect}
+            />
+          ))}
         </g>
-      ))}
-    </svg>
+      </svg>
+      <div className="map-zoom-controls" role="group" aria-label="Controles de zoom do mapa">
+        <button type="button" aria-label="Aproximar mapa" title="Aproximar" onClick={() => zoomAtCenter(1.35)} disabled={view.scale >= MAX_ZOOM}><Plus size={17} /></button>
+        <span className="map-zoom-level" aria-live="polite">{Math.round(view.scale * 100)}%</span>
+        <button type="button" aria-label="Afastar mapa" title="Afastar" onClick={() => zoomAtCenter(1 / 1.35)} disabled={view.scale <= MIN_ZOOM}><Minus size={17} /></button>
+        <button type="button" className="map-zoom-reset" aria-label="Restaurar enquadramento do mapa" title="Restaurar enquadramento" onClick={() => updateView({ scale: 1, tx: 0, ty: 0 })}><LocateFixed size={16} /></button>
+      </div>
+    </div>
   );
 }

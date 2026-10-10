@@ -1,12 +1,10 @@
-import type { ElectionCandidate, ElectionResult, MunicipalityRef } from '../types';
+import { findUnitByCode, GOVERNOR_RUNOFF_UFS } from '../data/states';
+import type { ElectionCandidate, ElectionResult, ElectionRound, MunicipalityRef } from '../types';
 
 const TSE_ROOT = 'https://resultados.tse.jus.br/oficial/ele2026';
-const ELECTION_BY_CARGO: Record<string, string> = {
-  '1': '6257',
-  '3': '6259',
-  '5': '6259',
-  '6': '6259',
-  '7': '6259',
+const ELECTION_BY_ROUND_CARGO: Record<ElectionRound, Record<string, string>> = {
+  '1': { '1': '6257', '3': '6259', '5': '6259', '6': '6259', '7': '6259' },
+  '2': { '1': '6258', '3': '6260' },
 };
 const TSE_KEY_ID = 'sNbt9Q_fLS65zE1_ZLNV-XRRwPY';
 const TSE_PUBLIC_KEY: JsonWebKey = {
@@ -15,6 +13,8 @@ const TSE_PUBLIC_KEY: JsonWebKey = {
   x: 'kWlpNHjuws1csyQZwzn3Fhzbi3RD435RbpThtSr4hMc',
   ext: true,
 };
+const TSE_REQUESTS_PER_SECOND = 50;
+const TSE_REQUEST_INTERVAL_MS = 1_000 / TSE_REQUESTS_PER_SECOND;
 
 interface RawObject {
   [key: string]: unknown;
@@ -39,7 +39,8 @@ interface RawPayload extends RawObject {
 }
 
 let publicKeyPromise: Promise<CryptoKey> | undefined;
-let municipalityIndexPromise: Promise<Map<string, MunicipalityRef>> | undefined;
+const municipalityIndexPromises = new Map<ElectionRound, Promise<Map<string, MunicipalityRef>>>();
+let nextTseRequestAt = 0;
 const responseCache = new Map<string, { expiresAt: number; value: Promise<RawPayload> }>();
 
 function decodeBase64Url(value: string): Uint8Array {
@@ -92,19 +93,35 @@ async function verifyJws(token: string): Promise<RawPayload> {
   return decodeJsonSegment(encodedPayload);
 }
 
+async function waitForTseRequestSlot(): Promise<void> {
+  const now = Date.now();
+  const scheduledAt = Math.max(now, nextTseRequestAt);
+  nextTseRequestAt = scheduledAt + TSE_REQUEST_INTERVAL_MS;
+  const delay = scheduledAt - now;
+  if (delay > 0) await new Promise<void>((resolve) => window.setTimeout(resolve, delay));
+}
+
 async function fetchSignedPayload(url: string): Promise<RawPayload> {
   const now = Date.now();
   const cached = responseCache.get(url);
   if (cached && cached.expiresAt > now) return cached.value;
 
-  const request = fetch(`${url}${url.includes('?') ? '&' : '?'}nocache=${now}`, {
-    cache: 'no-store',
-    headers: { Accept: 'application/jose, application/json, text/plain' },
-  }).then(async (response) => {
-    if (!response.ok) throw new Error(`O TSE respondeu com erro ${response.status}.`);
+  const isSecondRound = /\/6258\/|\/6260\//.test(url);
+  const cacheDuration = isSecondRound ? 15_000 : 60_000;
+  const request = (async () => {
+    await waitForTseRequestSlot();
+    const response = await fetch(`${url}${url.includes('?') ? '&' : '?'}nocache=${Date.now()}`, {
+      cache: 'no-store',
+      headers: { Accept: 'application/jose, application/json, text/plain' },
+    });
+    if (!response.ok) {
+      const error = new Error(`O TSE respondeu com erro ${response.status}.`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
+    }
     return verifyJws(await response.text());
-  });
-  responseCache.set(url, { expiresAt: now + 60_000, value: request });
+  })();
+  responseCache.set(url, { expiresAt: now + cacheDuration, value: request });
   try {
     return await request;
   } catch (error) {
@@ -113,14 +130,14 @@ async function fetchSignedPayload(url: string): Promise<RawPayload> {
   }
 }
 
-function electionCodeFor(cargoCode: string): string {
-  const code = ELECTION_BY_CARGO[cargoCode];
-  if (!code) throw new Error('Cargo não disponível na consulta do TSE.');
+function electionCodeFor(cargoCode: string, round: ElectionRound): string {
+  const code = ELECTION_BY_ROUND_CARGO[round][cargoCode];
+  if (!code) throw new Error(round === '2' ? 'Este cargo não tem disputa no segundo turno.' : 'Cargo não disponível na consulta do TSE.');
   return code;
 }
 
-export function getTseEndpoint(cargoCode: string, uf?: string, municipalityCode?: string): string {
-  const electionCode = electionCodeFor(cargoCode);
+export function getTseEndpoint(cargoCode: string, uf?: string, municipalityCode?: string, round: ElectionRound = '1'): string {
+  const electionCode = electionCodeFor(cargoCode, round);
   const region = uf ? uf.toLowerCase() : 'br';
   const cargo = cargoCode.padStart(4, '0');
   const election = electionCode.padStart(6, '0');
@@ -178,7 +195,7 @@ export function normalizeResults(payload: RawPayload, cargoCode: string, sourceU
   const turnout = asNumber(payload.e?.pcn ?? payload.e?.pc);
   const abstention = asNumber(payload.e?.pan ?? payload.e?.pa);
   return {
-    electionCode: String(payload.ele ?? electionCodeFor(cargoCode)),
+    electionCode: String(payload.ele ?? ''),
     cargoCode,
     cargoName: String(cargo.nmn ?? cargo.nmm ?? 'Cargo eleitoral'),
     ufCode: String(payload.cdabr ?? 'br'),
@@ -200,41 +217,48 @@ export async function getElectionResults(options: {
   cargoCode: string;
   uf?: string;
   municipalityCode?: string;
+  round?: ElectionRound;
 }): Promise<ElectionResult> {
-  const sourceUrl = getTseEndpoint(options.cargoCode, options.uf, options.municipalityCode);
+  const round = options.round ?? '1';
+  if (round === '2' && options.cargoCode === '3' && options.uf && !GOVERNOR_RUNOFF_UFS.includes(options.uf as (typeof GOVERNOR_RUNOFF_UFS)[number])) {
+    throw new Error(`Não há segundo turno para governador em ${options.uf}.`);
+  }
+  const sourceUrl = getTseEndpoint(options.cargoCode, options.uf, options.municipalityCode, round);
   const payload = await fetchSignedPayload(sourceUrl);
   return normalizeResults(payload, options.cargoCode, sourceUrl);
 }
 
-export async function getMunicipalityIndex(): Promise<Map<string, MunicipalityRef>> {
-  municipalityIndexPromise ??= (async () => {
-    const endpoint = `${TSE_ROOT}/6257/config/mun-e006257-cm.jws`;
+export function getMunicipalityIndex(round: ElectionRound = '1'): Promise<Map<string, MunicipalityRef>> {
+  const cached = municipalityIndexPromises.get(round);
+  if (cached) return cached;
+  const electionCode = electionCodeFor('1', round);
+  const request = (async () => {
+    const endpoint = `${TSE_ROOT}/${electionCode}/config/mun-e${electionCode.padStart(6, '0')}-cm.jws`;
     const payload = await fetchSignedPayload(endpoint);
     const result = new Map<string, MunicipalityRef>();
     const states = Array.isArray(payload.abr) ? payload.abr as RawObject[] : [];
     for (const state of states) {
-      const uf = String(state.cd ?? '').toUpperCase();
+      const unit = findUnitByCode(state.cd);
+      if (!unit) continue;
       const municipalities = Array.isArray(state.mu) ? state.mu as RawObject[] : [];
       for (const municipality of municipalities) {
         const ibgeCode = String(municipality.cdi ?? '').padStart(7, '0');
         const tseCode = String(municipality.cd ?? '').padStart(5, '0');
-        if (ibgeCode && tseCode) {
-          result.set(ibgeCode, {
-            ibgeCode,
-            tseCode,
-            name: String(municipality.nm ?? ''),
-            uf,
-          });
-        }
+        if (!municipality.cdi || !municipality.cd || result.has(ibgeCode)) continue;
+        result.set(ibgeCode, {
+          ibgeCode,
+          tseCode,
+          name: String(municipality.nm ?? ''),
+          uf: unit.uf,
+        });
       }
     }
     if (result.size === 0) throw new Error('O TSE não retornou o índice de municípios.');
     return result;
   })();
-  try {
-    return await municipalityIndexPromise;
-  } catch (error) {
-    municipalityIndexPromise = undefined;
+  municipalityIndexPromises.set(round, request);
+  return request.catch((error: unknown) => {
+    municipalityIndexPromises.delete(round);
     throw error;
-  }
+  });
 }
