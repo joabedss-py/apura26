@@ -5,8 +5,10 @@ import { feature as topojsonFeature } from 'topojson-client';
 const IBGE_API = 'https://servicodados.ibge.gov.br/api/v3/malhas';
 const COMMON_QUERY = 'formato=application/vnd.geo+json&qualidade=minima';
 const MUNICIPAL_MESH_URL = '/maps/brazil-municipalities-2025.topojson';
+const MUNICIPALITIES_BY_UF_DIR = '/maps/municipalities-by-uf';
 let allMunicipalitiesPromise: Promise<FeatureCollection> | undefined;
 let federalUnitsPromise: Promise<FeatureCollection> | undefined;
+const municipalityMapPromises = new Map<string, Promise<FeatureCollection>>();
 
 async function fetchGeoJson(url: string): Promise<FeatureCollection> {
   const response = await fetch(url, { headers: { Accept: 'application/vnd.geo+json, application/json' } });
@@ -29,10 +31,19 @@ export function getFederalUnitsMap(): Promise<FeatureCollection> {
 export function getMunicipalitiesMap(uf: string): Promise<FeatureCollection> {
   const unit = findUnitByCode(uf);
   if (!unit) return Promise.reject(new Error(`UF não reconhecida: ${uf}.`));
-  return getAllMunicipalitiesMap().then((data) => ({
-    ...data,
-    features: data.features.filter((feature) => getIbgeAreaCode(feature).startsWith(unit.ibgeCode)),
-  }));
+  const cached = municipalityMapPromises.get(unit.ibgeCode);
+  if (cached) return cached;
+
+  const request = fetchGeoJson(`${MUNICIPALITIES_BY_UF_DIR}/${unit.ibgeCode}.geojson`).then((data) => {
+    const features = data.features.filter((feature) => getIbgeAreaCode(feature).startsWith(unit.ibgeCode));
+    if (!features.length) throw new Error(`A malha municipal da UF ${unit.uf} não contém geometrias.`);
+    return { ...data, features };
+  });
+  municipalityMapPromises.set(unit.ibgeCode, request);
+  return request.catch((error: unknown) => {
+    municipalityMapPromises.delete(unit.ibgeCode);
+    throw error;
+  });
 }
 
 export function getAllMunicipalitiesMap(): Promise<FeatureCollection> {
