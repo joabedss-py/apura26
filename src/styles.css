@@ -111,9 +111,10 @@ main { max-width: 1510px; margin: 0 auto; padding: 0 clamp(20px, 4vw, 66px) 44px
 .map-placeholder svg { color: var(--mint); }
 .map-selection { position: absolute; left: 19px; bottom: 14px; display: flex; align-items: center; gap: 9px; padding: 8px 11px; border: 1px solid rgba(83, 224, 161, .28); background: rgba(10, 25, 19, .92); border-radius: 5px; box-shadow: 0 7px 18px rgba(0, 0, 0, .2); }
 .selection-pin { display: grid; place-items: center; color: var(--mint); }
-.map-selection div { display: grid; gap: 2px; }
+.map-selection div { min-width: 0; display: grid; gap: 2px; }
 .map-selection strong { color: #edf5f0; font-size: 10px; }
-.map-selection div span { color: #87a092; font-family: var(--mono); font-size: 8px; }
+.map-selection div span { overflow: hidden; color: #87a092; font-family: var(--mono); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.map-selection div .map-selection-result { color: #dce8e0; font-size: 7px; }
 .map-footer { min-height: 39px; border-top: 1px solid var(--line); padding: 0 17px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .map-legend, .map-source { display: flex; align-items: center; gap: 7px; color: #8ca296; font-family: var(--mono); font-size: 8px; letter-spacing: .035em; }
 .legend-swatch { width: 9px; height: 9px; display: inline-block; border-radius: 2px; background: var(--mint); box-shadow: 0 0 8px rgba(83, 224, 161, .25); }
@@ -400,6 +401,7 @@ main { max-width: 1510px; margin: 0 auto; padding: 0 clamp(20px, 4vw, 66px) 44px
   .map-selection { left: 8px; bottom: 8px; max-width: calc(100% - 120px); padding: 7px 8px; }
   .map-selection strong { font-size: 9px; }
   .map-selection div span { font-size: 7px; }
+  .map-selection div .map-selection-result { font-size: 6px; }
   .map-footer { min-height: 43px; align-items: center; }
   .map-legend { min-width: 0; max-width: calc(100% - 88px); overflow: hidden; }
   .map-legend-items { gap: 7px; overflow: hidden; }

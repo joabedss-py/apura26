@@ -62,7 +62,7 @@ const WIDTH = 860;
 const HEIGHT = 560;
 const voteFormatter = new Intl.NumberFormat('pt-BR');
 const MIN_ZOOM = 1;
-const MAX_ZOOM = 8;
+const MAX_ZOOM = 16;
 const UF_LABEL_OFFSETS: Record<string, readonly [number, number]> = {
   AL: [10, -2], AP: [6, 0], DF: [0, 9], ES: [7, 2], PB: [9, -4], PE: [9, 0], RJ: [7, 5], RN: [7, -5], SE: [8, 4],
 };
@@ -209,10 +209,11 @@ const MapFeature = memo(function MapFeature({
     : mixCandidateColors(shares ?? []) ?? '#29413b';
   const fillOpacity = (selected ? 1 : leader ? 0.94 : 0.25) * (isDimmed ? 0.18 : 1);
   const distribution = shares?.length ? describeVoteMix(shares) : '';
+  const leaderPercent = leader?.percent.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const label = leader
     ? level === 'state'
       ? `${feature.label}. Candidato mais votado: ${leader.ballotName}, ${leader.percent.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%, ${voteFormatter.format(leader.votes)} votos.`
-      : `${feature.label}. Mistura proporcional de votos: ${distribution}. Líder: ${leader.ballotName}, ${voteFormatter.format(leader.votes)} votos.`
+      : `${feature.label}. Mistura proporcional de votos: ${distribution}. Líder: ${leader.ballotName}, ${leaderPercent}%, ${voteFormatter.format(leader.votes)} votos.`
     : `${feature.label}. Selecione para consultar.`;
   return (
     <g className="map-feature-group">
@@ -235,7 +236,7 @@ const MapFeature = memo(function MapFeature({
           }
         }}
       >
-        <title>{leader ? `${feature.label} · ${level === 'state' ? `Mais votado: ${leader.ballotName}` : distribution}` : feature.label}</title>
+        <title>{leader ? `${feature.label} · ${level === 'state' ? `Mais votado: ${leader.ballotName}, ${leaderPercent}%, ${voteFormatter.format(leader.votes)} votos` : `${distribution} · líder: ${leader.ballotName}, ${leaderPercent}%, ${voteFormatter.format(leader.votes)} votos`}` : feature.label}</title>
       </path>
       {level === 'state' && (
         <text x={feature.centerX} y={feature.centerY} className="map-unit-label" textAnchor="middle" dominantBaseline="central" aria-hidden="true">
@@ -312,7 +313,7 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
       if (selectedUF) {
         const selectedUnit = projectedUnits.find((unit) => unit.uf === selectedUF);
         if (selectedUnit) {
-          updateView(viewForBounds(selectedUnit.bounds, 1.8));
+          updateView(viewForBounds(selectedUnit.bounds, 2.4));
           return;
         }
       }
