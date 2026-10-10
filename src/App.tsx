@@ -488,19 +488,25 @@ export default function App() {
   }, [showAllMunicipalities, municipalityIndex, municipalityIndexRound, selectedUF, officeCode, round, roundTwoStarted, municipalityRefreshKey]);
 
   useEffect(() => {
-    if (round !== '2' || !roundTwoStarted) return;
-    if ((showAllMunicipalities || selectedUF) && municipalityProgress.isLoading) return;
-    if (!liveUpdates) return;
-    const interval = showAllMunicipalities && !selectedUF
-      ? ROUND_TWO_CITIES_POLL_MS
-      : resultStatus === 'error' ? 300_000 : ROUND_TWO_LOCAL_POLL_MS;
+    if (round !== '2' || !roundTwoStarted || !liveUpdates) return;
+    const interval = resultStatus === 'error' ? 300_000 : ROUND_TWO_LOCAL_POLL_MS;
     const timer = window.setInterval(() => {
       if (document.visibilityState !== 'visible') return;
       setRefreshKey((value) => value + 1);
-      if (showAllMunicipalities || selectedUF) setMunicipalityRefreshKey((value) => value + 1);
     }, interval);
     return () => window.clearInterval(timer);
-  }, [round, roundTwoStarted, showAllMunicipalities, selectedUF, municipalityProgress.isLoading, resultStatus, liveUpdates]);
+  }, [round, roundTwoStarted, resultStatus, liveUpdates]);
+
+  useEffect(() => {
+    if (round !== '2' || !roundTwoStarted || !liveUpdates) return;
+    if (!showAllMunicipalities && !selectedUF) return;
+    if (municipalityProgress.isLoading) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      setMunicipalityRefreshKey((value) => value + 1);
+    }, ROUND_TWO_CITIES_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [round, roundTwoStarted, showAllMunicipalities, selectedUF, municipalityProgress.isLoading, liveUpdates]);
 
   const municipalVoteShares = useMemo(() => {
     const resultMap = new Map<string, ElectionCandidate[]>();
