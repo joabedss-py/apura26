@@ -222,8 +222,8 @@ const MapFeature = memo(function MapFeature({
         className={`map-feature${selected ? ' is-selected' : ''}${isDimmed ? ' is-dimmed' : ''}`}
         fill={fill}
         fillOpacity={fillOpacity}
-        stroke={selected ? '#e6fff1' : '#8aa79b'}
-        strokeWidth={selected ? 1.9 : level === 'state' ? 1.15 : 0.62}
+        stroke={selected ? '#e6fff1' : level === 'municipality' ? '#07110d' : '#8aa79b'}
+        strokeWidth={selected ? 1.9 : level === 'state' ? 1.15 : 1.05}
         vectorEffect="non-scaling-stroke"
         tabIndex={0}
         role="button"

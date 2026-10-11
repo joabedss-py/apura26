@@ -702,11 +702,11 @@ export default function App() {
       ? `SIMULAÇÃO — resultados oficiais do 1º turno chegando em lotes; ${formatInteger(municipalityProgress.completed)} de ${formatInteger(municipalityList.length || mapData?.features.length || 5571)} municípios carregados. Nenhum voto é inventado.`
       : 'SIMULAÇÃO — resultados oficiais já publicados do 1º turno; a ordem de carregamento é demonstrativa, não ao vivo.'
     : showAllMunicipalities
-      ? 'Cada município combina as cores das candidaturas conforme a proporção oficial de votos. Selecione uma cidade para abrir a votação nominal.'
+      ? 'Cada município usa a cor oficial do candidato líder; disputas apertadas recebem um degradê entre as cores dos dois mais votados. Selecione uma cidade para abrir a votação nominal.'
       : selectedUF
         ? municipalityProgress.isLoading
           ? `Resultados municipais carregados progressivamente: ${formatInteger(municipalityProgress.completed)} de ${formatInteger(municipalityList.length)}.`
-          : 'Cada município reflete a distribuição oficial de votos. Selecione uma cidade para detalhar a votação nominal.'
+          : 'Cada município usa a cor do líder; a proximidade do segundo colocado define a intensidade do degradê. Selecione uma cidade para detalhar a votação nominal.'
         : 'Cada UF recebe a cor do candidato mais votado. Selecione um estado para abrir o mapa municipal ou veja todas as cidades.';
   const mapLegendMessage = simulationVisible
     ? 'Simulação progressiva · dados oficiais do TSE'

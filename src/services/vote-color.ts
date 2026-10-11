@@ -2,6 +2,9 @@ import type { ElectionCandidate } from '../types';
 import { getCandidateColor } from './colors';
 
 type Rgb = [number, number, number];
+type Oklab = [number, number, number];
+
+const GRADIENT_MARGIN_PP = 18;
 
 function parseColor(color: string): Rgb | null {
   const hex = color.match(/^#([\da-f]{3}|[\da-f]{6})$/i);
@@ -33,27 +36,84 @@ function rankedVotes(candidates: ElectionCandidate[]): ElectionCandidate[] {
   return candidates
     .filter((candidate) => candidate.votes > 0)
     .sort((a, b) => b.votes - a.votes)
-    .slice(0, 3);
+    .slice(0, 2);
 }
 
-/** Combina até três candidaturas mais votadas na proporção dos votos oficiais locais. */
+function toLinear(channel: number): number {
+  const normalized = channel / 255;
+  return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+}
+
+function fromLinear(channel: number): number {
+  const bounded = Math.min(1, Math.max(0, channel));
+  const encoded = bounded <= 0.0031308 ? bounded * 12.92 : 1.055 * bounded ** (1 / 2.4) - 0.055;
+  return Math.round(encoded * 255);
+}
+
+function toOklab([red, green, blue]: Rgb): Oklab {
+  const r = toLinear(red);
+  const g = toLinear(green);
+  const b = toLinear(blue);
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  return [
+    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
+  ];
+}
+
+function fromOklab([lightness, a, b]: Oklab): Rgb {
+  const l = (lightness + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m = (lightness - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s = (lightness - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  return [
+    fromLinear(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
+    fromLinear(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
+    fromLinear(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s),
+  ];
+}
+
+function interpolateOklab(first: string, second: string, secondWeight: number): string {
+  const firstRgb = parseColor(first) ?? [130, 145, 136];
+  const secondRgb = parseColor(second) ?? [130, 145, 136];
+  const firstLab = toOklab(firstRgb);
+  const secondLab = toOklab(secondRgb);
+  const color = fromOklab(firstLab.map((channel, index) => channel * (1 - secondWeight) + secondLab[index] * secondWeight) as Oklab);
+  return `rgb(${color.join(' ')})`;
+}
+
+function marginInPoints(leader: ElectionCandidate, runnerUp: ElectionCandidate): number {
+  if (!Number.isFinite(leader.percent) || !Number.isFinite(runnerUp.percent)) return GRADIENT_MARGIN_PP;
+  return Math.max(0, leader.percent - runnerUp.percent);
+}
+
+function runnerUpBlend(leader: ElectionCandidate, runnerUp: ElectionCandidate): number {
+  const margin = marginInPoints(leader, runnerUp);
+  return margin >= GRADIENT_MARGIN_PP ? 0 : 0.5 * (1 - margin / GRADIENT_MARGIN_PP);
+}
+
+/** Usa a cor oficial do líder; em disputas apertadas, faz um degradê perceptualmente suave com o segundo colocado. */
 export function mixCandidateColors(candidates: ElectionCandidate[]): string | null {
-  const visible = candidates.filter((candidate) => candidate.votes > 0).sort((a, b) => b.votes - a.votes);
-  const totalVotes = visible.reduce((total, candidate) => total + candidate.votes, 0);
-  if (!totalVotes) return null;
+  const [leader, runnerUp] = rankedVotes(candidates);
+  if (!leader) return null;
+  if (!runnerUp) return getCandidateColor(leader);
 
-  const total = visible.reduce<Rgb>((sum, candidate) => {
-    const rgb = parseColor(getCandidateColor(candidate)) ?? [130, 145, 136];
-    const weight = candidate.votes / totalVotes;
-    return [sum[0] + rgb[0] * weight, sum[1] + rgb[1] * weight, sum[2] + rgb[2] * weight];
-  }, [0, 0, 0]);
-
-  return `rgb(${total.map((channel) => Math.round(channel)).join(' ')})`;
+  const runnerUpWeight = runnerUpBlend(leader, runnerUp);
+  if (runnerUpWeight < 0.005) return getCandidateColor(leader);
+  return interpolateOklab(getCandidateColor(leader), getCandidateColor(runnerUp), runnerUpWeight);
 }
 
-/** Texto acessível com os percentuais dos candidatos que compõem a cor do polígono. */
+/** Descrição acessível da regra visual, sem confundir mistura de cores com percentual oficial de votos. */
 export function describeVoteMix(candidates: ElectionCandidate[]): string {
-  return rankedVotes(candidates)
-    .map((candidate) => `${candidate.ballotName} ${candidate.percent.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`)
-    .join(' · ');
+  const [leader, runnerUp] = rankedVotes(candidates);
+  if (!leader) return '';
+  if (!runnerUp) return `Cor oficial de ${leader.ballotName}`;
+
+  const margin = marginInPoints(leader, runnerUp);
+  if (runnerUpBlend(leader, runnerUp) < 0.005) {
+    return `Cor oficial de ${leader.ballotName}; vantagem de ${margin.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} pontos percentuais`;
+  }
+  return `Degradê entre ${leader.ballotName} e ${runnerUp.ballotName}; diferença de ${margin.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} pontos percentuais`;
 }
