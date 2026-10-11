@@ -234,6 +234,8 @@ function SummaryPanel({
           <div className="result-meta"><StatusPill status={waitingForCount ? 'warning' : 'ok'} text={waitingForCount ? 'AGUARDANDO APURAÇÃO' : 'ASSINATURA TSE VERIFICADA'} /><span>Atualizado {result.updatedDate || '—'}{result.updatedTime ? ` · ${result.updatedTime}` : ''}</span></div>
           {waitingForCount && <div className="round-waiting-notice"><Clock3 size={14} /><span>Arquivo oficial do TSE recebido; ainda não há seções totalizadas nem votos apurados.</span></div>}
           {round === '2' && roundTwoStarted && <p className="live-update-note"><span className="live-dot" /> Atualização automática a cada 30 segundos</p>}
+          <div className="candidate-heading"><h3>Votação nominal</h3><span>{result.candidates.length} candidaturas{selectedMunicipality ? ' · votos deste município' : ' · clique para focar'}</span></div>
+          <CandidateList result={result} waitingForCount={waitingForCount} selectedCandidateId={selectedCandidateId} photoRegion={officeCode === '1' ? 'BR' : selectedUF ?? 'BR'} onSelectCandidate={onSelectCandidate} />
           {waitingForCount ? <div className="stat-grid">
             <div className="stat-card"><span>Seções apuradas</span><strong>0 <small>/ {formatInteger(result.totalSections)}</small></strong><div className="stat-progress"><span style={{ width: '0%' }} /></div><em>Votos ainda não totalizados</em></div>
             <div className="stat-card"><span>Totalização</span><strong>Aguardando</strong><em>Nenhum voto apurado ainda</em></div>
@@ -241,8 +243,6 @@ function SummaryPanel({
             <div className="stat-card"><span>Seções apuradas</span><strong>{formatInteger(result.countedSections)} <small>/ {formatInteger(result.totalSections)}</small></strong><div className="stat-progress"><span style={{ width: `${Math.max(0, Math.min(100, result.countedPercent ?? 0))}%` }} /></div><em>{formatPercent(result.countedPercent)} totalizado</em></div>
             <div className="stat-card"><span>Comparecimento</span><strong>{formatPercent(result.turnout)}</strong><em>Abstenção {formatPercent(result.abstention)}</em></div>
           </div>}
-          <div className="candidate-heading"><h3>Votação nominal</h3><span>{result.candidates.length} candidaturas{selectedMunicipality ? ' · votos deste município' : ' · clique para focar'}</span></div>
-          <CandidateList result={result} waitingForCount={waitingForCount} selectedCandidateId={selectedCandidateId} photoRegion={officeCode === '1' ? 'BR' : selectedUF ?? 'BR'} onSelectCandidate={onSelectCandidate} />
           {!waitingForCount && result.validVotes !== null && <div className="valid-votes"><span>Votos válidos</span><strong>{formatInteger(result.validVotes)}</strong></div>}
         </>
       ) : round === '2' && !roundTwoStarted ? (
