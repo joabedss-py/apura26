@@ -22,6 +22,8 @@ function candidateInitials(candidate: ElectionCandidate): string {
 export default function CandidatePortrait({ candidate, region, className }: CandidatePortraitProps) {
   const portraitRef = useRef<HTMLSpanElement | null>(null);
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  const normalizedStatus = (candidate.status ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleUpperCase('pt-BR');
+  const notElected = normalizedStatus.includes('NAO ELEITO');
 
   useEffect(() => {
     let active = true;
@@ -56,7 +58,7 @@ export default function CandidatePortrait({ candidate, region, className }: Cand
   return (
     <span
       ref={portraitRef}
-      className={`candidate-photo ${className}`}
+      className={`candidate-photo ${className}${notElected ? ' candidate-photo--not-elected' : ''}`}
       style={{ backgroundColor: getCandidateColor(candidate) }}
       aria-hidden="true"
     >

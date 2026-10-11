@@ -119,6 +119,7 @@ main { max-width: 1510px; margin: 0 auto; padding: 0 clamp(20px, 4vw, 66px) 44px
 .map-hover-candidate + .map-hover-candidate { border-top: 1px solid rgba(190, 212, 198, .11); }
 .candidate-photo { flex: none; display: grid; place-items: center; overflow: hidden; border: 1px solid rgba(240, 247, 242, .25); border-radius: 50%; color: #fff; font-family: var(--mono); font-weight: 700; box-shadow: 0 0 0 2px rgba(240, 247, 242, .055); }
 .candidate-photo img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.candidate-photo--not-elected img { filter: grayscale(1) contrast(.94); opacity: .78; transition: filter .2s ease, opacity .2s ease; }
 .candidate-photo--map { width: 29px; height: 29px; font-size: 8px; }
 .candidate-photo--list { width: 34px; height: 34px; font-size: 9px; }
 .map-hover-candidate-info { min-width: 0; display: grid; gap: 3px; }
@@ -505,6 +506,11 @@ main { max-width: 1510px; margin: 0 auto; padding: 0 clamp(20px, 4vw, 66px) 44px
 .workspace--fullscreen > .results-panel { grid-area: results; }
 .workspace--fullscreen > .map-panel, .workspace--fullscreen > .results-panel { width: 100%; height: 100%; min-height: 0; max-height: 100%; }
 .workspace--fullscreen > .results-panel { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.workspace--fullscreen .candidate-heading { order: 1; padding-top: 9px; }
+.workspace--fullscreen .candidate-list { order: 2; }
+.workspace--fullscreen .stat-grid { order: 3; }
+.workspace--fullscreen .valid-votes { order: 4; }
+.workspace--fullscreen .source-stamp { order: 5; }
 .workspace--fullscreen .map-stage { min-height: 0; height: auto; flex: 1; }
 .workspace--fullscreen .map-viewport { min-height: 0; }
 .workspace--fullscreen .brazil-map { max-height: none; }
