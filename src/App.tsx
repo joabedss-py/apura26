@@ -5,6 +5,7 @@ import MunicipalityResultsPanel from './components/MunicipalityResultsPanel';
 import { FEDERAL_UNITS, GOVERNOR_RUNOFF_UFS, OFFICE_OPTIONS, findUnitByCode } from './data/states';
 import { getAllMunicipalitiesMap, getFederalUnitsMap, getIbgeAreaCode, getMunicipalitiesMap } from './services/ibge';
 import { getCandidateColor } from './services/colors';
+import { getCandidateColorForMargin, type MarginBand } from './services/vote-color';
 import { getElectionResults, getMunicipalityIndex } from './services/tse';
 import type { ElectionCandidate, ElectionResult, ElectionRound, FeatureCollection, GeoFeature, LoadState, MunicipalityOverviewRow, MunicipalityRef } from './types';
 
@@ -16,6 +17,15 @@ const ROUND_TWO_LOCAL_POLL_MS = 30_000;
 const ROUND_TWO_CITIES_POLL_MS = 180_000;
 const MUNICIPALITY_REQUEST_WORKERS = 32;
 const MUNICIPALITY_PROGRESS_BATCH = 50;
+const MARGIN_LEGEND_BANDS: Array<{ band: MarginBand; label: string }> = [
+  { band: 'close', label: '0–5 p.p.' },
+  { band: 'competitive', label: '5–20 p.p.' },
+  { band: 'decisive', label: 'Acima de 20 p.p.' },
+];
+const PRESIDENT_MARGIN_LEGEND = [
+  { id: 'lula', label: 'LULA', color: '#D60828' },
+  { id: 'flavio', label: 'FLÁVIO', color: '#272D97' },
+];
 
 function formatInteger(value?: number | null): string {
   return value === null || value === undefined ? '—' : new Intl.NumberFormat('pt-BR').format(value);
@@ -159,6 +169,10 @@ function SummaryPanel({
   const areaTitle = selectedMunicipality?.name ?? (selectedUF ? FEDERAL_UNITS.find((unit) => unit.uf === selectedUF)?.name : 'Brasil');
   const waitingForCount = Boolean(round === '2' && roundTwoStarted && result?.countedSections === 0);
   const roundLabel = round === '1' ? '1º turno' : '2º turno';
+  const municipalityLeader = selectedMunicipality && !waitingForCount
+    ? result?.candidates.find((candidate) => candidate.votes > 0)
+    : undefined;
+  const municipalityCounted = Boolean(selectedMunicipality && status === 'ready' && municipalityLeader);
   return (
     <aside className="results-panel">
       <div className="panel-heading">
@@ -168,6 +182,31 @@ function SummaryPanel({
           <button className="icon-button refresh-button" type="button" onClick={onRefresh} aria-label="Atualizar resultados" title="Consultar o TSE novamente" disabled={round === '2' && !roundTwoStarted}><RefreshCw size={15} className={refreshing ? 'spin' : ''} /><span>Atualizar</span></button>
         </div>
       </div>
+      {selectedMunicipality && <div className="municipality-focus" aria-live="polite" aria-atomic="true">
+        <div className="municipality-focus-place">
+          <span className="municipality-focus-kicker">MUNICÍPIO SELECIONADO · {selectedMunicipality.uf}</span>
+          <strong>{selectedMunicipality.name}</strong>
+          <small>{selectedMunicipality.tseCode ? `Código TSE ${selectedMunicipality.tseCode} · IBGE ${selectedMunicipality.ibgeCode}` : `IBGE ${selectedMunicipality.ibgeCode} · identificando código TSE`}</small>
+        </div>
+        <div className="municipality-focus-votes">
+          {municipalityCounted && municipalityLeader ? <>
+            <span className="municipality-focus-kicker"><i style={{ backgroundColor: getCandidateColor(municipalityLeader) }} /> LÍDER LOCAL</span>
+            <strong>{municipalityLeader.ballotName}</strong>
+            <b>{formatInteger(municipalityLeader.votes)} votos</b>
+            <small>{formatPercent(municipalityLeader.percent)} dos votos nominais</small>
+          </> : <span className={`municipality-focus-state${status === 'error' ? ' is-error' : ''}`}>
+            {round === '2' && !roundTwoStarted
+              ? 'Aguardando o início da apuração do 2º turno.'
+              : waitingForCount
+                ? 'Aguardando votos totalizados pelo TSE.'
+                : status === 'loading'
+                  ? 'Consultando votos nominais no TSE…'
+                  : status === 'error'
+                    ? 'Não foi possível consultar os votos deste município.'
+                    : 'Ainda não há votos publicados para este município.'}
+          </span>}
+        </div>
+      </div>}
       {result ? (
         <>
           <div className="result-meta"><StatusPill status={waitingForCount ? 'warning' : 'ok'} text={waitingForCount ? 'AGUARDANDO APURAÇÃO' : 'ASSINATURA TSE VERIFICADA'} /><span>Atualizado {result.updatedDate || '—'}{result.updatedTime ? ` · ${result.updatedTime}` : ''}</span></div>
@@ -180,7 +219,7 @@ function SummaryPanel({
             <div className="stat-card"><span>Seções apuradas</span><strong>{formatInteger(result.countedSections)} <small>/ {formatInteger(result.totalSections)}</small></strong><div className="stat-progress"><span style={{ width: `${Math.max(0, Math.min(100, result.countedPercent ?? 0))}%` }} /></div><em>{formatPercent(result.countedPercent)} totalizado</em></div>
             <div className="stat-card"><span>Comparecimento</span><strong>{formatPercent(result.turnout)}</strong><em>Abstenção {formatPercent(result.abstention)}</em></div>
           </div>}
-          <div className="candidate-heading"><h3>Votação nominal</h3><span>{result.candidates.length} candidaturas · clique para focar</span></div>
+          <div className="candidate-heading"><h3>Votação nominal</h3><span>{result.candidates.length} candidaturas{selectedMunicipality ? ' · votos deste município' : ' · clique para focar'}</span></div>
           <CandidateList result={result} waitingForCount={waitingForCount} selectedCandidateId={selectedCandidateId} onSelectCandidate={onSelectCandidate} />
           {!waitingForCount && result.validVotes !== null && <div className="valid-votes"><span>Votos válidos</span><strong>{formatInteger(result.validVotes)}</strong></div>}
         </>
@@ -726,11 +765,11 @@ export default function App() {
       ? `SIMULAÇÃO — resultados oficiais do 1º turno chegando em lotes; ${formatInteger(municipalityProgress.completed)} de ${formatInteger(municipalityList.length || mapData?.features.length || 5571)} municípios carregados. Nenhum voto é inventado.`
       : 'SIMULAÇÃO — resultados oficiais já publicados do 1º turno; a ordem de carregamento é demonstrativa, não ao vivo.'
     : showAllMunicipalities
-      ? 'Cada município usa a cor oficial do candidato líder; disputas apertadas recebem um degradê entre as cores dos dois mais votados. Selecione uma cidade para abrir a votação nominal.'
+      ? 'A cor identifica o candidato vencedor em cada município; tons mais escuros indicam uma vantagem maior sobre o segundo colocado. Selecione uma cidade para abrir a votação nominal.'
       : selectedUF
         ? municipalityProgress.isLoading
           ? `Resultados municipais carregados progressivamente: ${formatInteger(municipalityProgress.completed)} de ${formatInteger(municipalityList.length)}.`
-          : 'Cada município usa a cor do líder; a proximidade do segundo colocado define a intensidade do degradê. Selecione uma cidade para detalhar a votação nominal.'
+          : 'A cor identifica o candidato vencedor; tons mais escuros indicam maior vantagem sobre o segundo colocado. Selecione uma cidade para detalhar a votação nominal.'
         : 'Cada UF recebe a cor do candidato mais votado. Selecione um estado para abrir o mapa municipal ou veja todas as cidades.';
   const mapLegendMessage = simulationVisible
     ? 'Simulação progressiva · dados oficiais do TSE'
@@ -745,6 +784,9 @@ export default function App() {
               ? 'Carregando resultados municipais'
               : 'Aguardando resultados municipais'
           : 'Vencedores por UF';
+  const marginLegendCandidates: Array<{ id: string; label: string; color: string }> = officeCode === '1'
+    ? PRESIDENT_MARGIN_LEGEND
+    : legendCandidates.slice(0, 2).map(({ candidate }) => ({ id: candidate.id, label: candidate.ballotName, color: getCandidateColor(candidate) }));
   const realtimeActive = isOfficialRealtime ? liveUpdates : simulationVisible;
   const realtimeDisabled = round === '2' && !roundTwoStarted;
   const realtimeLabel = isOfficialRealtime
@@ -895,24 +937,41 @@ export default function App() {
               ) : <div className="map-placeholder">{mapStatus === 'loading' ? <><LoaderCircle size={24} className="spin" /><span>Carregando malha oficial do IBGE…</span></> : <><Info size={20} /><span>{mapMessage || 'Não foi possível carregar o mapa.'}</span></>}</div>}
               {selectedUF && selectedMunicipality && <div className="map-selection"><span className="selection-pin"><MapPin size={14} /></span><div aria-live="polite"><strong>{selectedMunicipality.name}</strong><span>{selectedMunicipality.uf} · {selectedMunicipality.tseCode ? `código TSE ${selectedMunicipality.tseCode}` : 'identificando localidade oficial…'}</span><span className="map-selection-result" style={selectedMunicipalityLeader ? { color: getCandidateColor(selectedMunicipalityLeader) } : undefined} title={municipalitySelectionSummary}>{municipalitySelectionSummary}</span></div></div>}
             </div>
-            <div className="map-footer">
-              <div className="map-legend">
+            <div className={`map-footer${cityWinners ? ' map-footer--scale' : ''}`}>
+              {cityWinners ? <div className="margin-legend" aria-label="Legenda de diferença em pontos percentuais">
+                <div className="margin-legend-copy">
+                  <strong>Diferença em pontos percentuais</strong>
+                  <p>O mapa mostra a cor do partido do candidato vencedor em cada município. Quanto mais escura a cor, maior a vantagem do primeiro colocado.</p>
+                </div>
+                <div className="margin-legend-table" role="table" aria-label="Faixas de vantagem do candidato vencedor">
+                  <div className="margin-legend-grid" role="row">
+                    <span className="margin-legend-heading" role="columnheader">CANDIDATO</span>
+                    {MARGIN_LEGEND_BANDS.map(({ band, label }) => <span className="margin-legend-heading" role="columnheader" key={band}>{label}</span>)}
+                  </div>
+                  {marginLegendCandidates.map((candidate) => <div className="margin-legend-grid" role="row" key={candidate.id}>
+                    <span className="margin-legend-candidate" role="rowheader" title={candidate.label}>{candidate.label}</span>
+                    {MARGIN_LEGEND_BANDS.map(({ band, label }) => {
+                      const color = getCandidateColorForMargin(candidate.color, band);
+                      return <span className="margin-legend-swatch" role="cell" key={`${candidate.id}-${band}`} style={{ backgroundColor: color }} title={`${candidate.label} · ${label} · ${color}`} aria-label={`${candidate.label}, ${label}, ${color}`} />;
+                    })}
+                  </div>)}
+                  {!marginLegendCandidates.length && <div className="margin-legend-empty">Aguardando os candidatos líderes publicados pelo TSE.</div>}
+                </div>
+              </div> : <div className="map-legend">
                 {legendCandidates.length ? (
                   <>
                     <span className="legend-label">{showAllMunicipalities || selectedUF ? 'CANDIDATOS' : 'VENCEDORES'}</span>
                     <div className="map-legend-items">
                       {legendCandidates.map(({ candidate }) => <span className="map-legend-item" key={candidate.id} title={candidate.ballotName}><i style={{ backgroundColor: getCandidateColor(candidate) }} />{candidate.ballotName}</span>)}
                     </div>
-                    {(showAllMunicipalities || selectedUF) && <span className="map-legend-intensity">COR = DISTRIBUIÇÃO DOS VOTOS</span>}
                   </>
                 ) : (
                   <>
                     <span className="legend-swatch" />
                     <span>{mapLegendMessage}</span>
-                    {(showAllMunicipalities || selectedUF) && <span className="map-legend-intensity">COR = DISTRIBUIÇÃO DOS VOTOS</span>}
                   </>
                 )}
-              </div>
+              </div>}
               <div className="map-source"><Database size={13} /> MALHA: IBGE · 2025{(leadersLoading || municipalityProgress.isLoading) && <span className="loading-tiny"><LoaderCircle size={12} className="spin" /> {selectedUF && municipalityList.length ? `${formatInteger(municipalityProgress.completed)}/${formatInteger(municipalityList.length)}` : 'TSE'}</span>}</div>
             </div>
           </div>

@@ -4,7 +4,15 @@ import { getCandidateColor } from './colors';
 type Rgb = [number, number, number];
 type Oklab = [number, number, number];
 
-const GRADIENT_MARGIN_PP = 18;
+export type MarginBand = 'close' | 'competitive' | 'decisive';
+
+const LOW_MARGIN_MAX_PP = 5;
+const COMPETITIVE_MARGIN_MAX_PP = 20;
+
+const PRESIDENTIAL_MARGIN_COLORS: Record<string, Record<MarginBand, string>> = {
+  '#D60828': { close: '#F3B5BF', competitive: '#E66B7E', decisive: '#D60828' },
+  '#272D97': { close: '#C8CDDB', competitive: '#919BB6', decisive: '#272D97' },
+};
 
 function parseColor(color: string): Rgb | null {
   const hex = color.match(/^#([\da-f]{3}|[\da-f]{6})$/i);
@@ -84,36 +92,51 @@ function interpolateOklab(first: string, second: string, secondWeight: number): 
   return `rgb(${color.join(' ')})`;
 }
 
-function marginInPoints(leader: ElectionCandidate, runnerUp: ElectionCandidate): number {
-  if (!Number.isFinite(leader.percent) || !Number.isFinite(runnerUp.percent)) return GRADIENT_MARGIN_PP;
+function marginInPoints(leader: ElectionCandidate, runnerUp: ElectionCandidate): number | null {
+  if (!Number.isFinite(leader.percent) || !Number.isFinite(runnerUp.percent)) return null;
   return Math.max(0, leader.percent - runnerUp.percent);
 }
 
-function runnerUpBlend(leader: ElectionCandidate, runnerUp: ElectionCandidate): number {
-  const margin = marginInPoints(leader, runnerUp);
-  return margin >= GRADIENT_MARGIN_PP ? 0 : 0.5 * (1 - margin / GRADIENT_MARGIN_PP);
+function marginBandFor(margin: number): MarginBand {
+  if (margin <= LOW_MARGIN_MAX_PP) return 'close';
+  if (margin <= COMPETITIVE_MARGIN_MAX_PP) return 'competitive';
+  return 'decisive';
 }
 
-/** Usa a cor oficial do líder; em disputas apertadas, faz um degradê perceptualmente suave com o segundo colocado. */
+function marginBandLabel(band: MarginBand): string {
+  if (band === 'close') return '0 a 5 p.p.';
+  if (band === 'competitive') return '5 a 20 p.p.';
+  return 'acima de 20 p.p.';
+}
+
+/** Mantém o matiz do vencedor e reduz a intensidade nas disputas mais apertadas. */
+export function getCandidateColorForMargin(color: string, band: MarginBand): string {
+  const exactPalette = PRESIDENTIAL_MARGIN_COLORS[color.toUpperCase()];
+  if (exactPalette) return exactPalette[band];
+
+  const neutralBlend = band === 'close' ? 0.72 : band === 'competitive' ? 0.44 : 0;
+  return neutralBlend ? interpolateOklab(color, '#F3F4F2', neutralBlend) : color;
+}
+
+/** Usa a cor do vencedor; a faixa de diferença para o segundo colocado define sua intensidade. */
 export function mixCandidateColors(candidates: ElectionCandidate[]): string | null {
   const [leader, runnerUp] = rankedVotes(candidates);
   if (!leader) return null;
   if (!runnerUp) return getCandidateColor(leader);
 
-  const runnerUpWeight = runnerUpBlend(leader, runnerUp);
-  if (runnerUpWeight < 0.005) return getCandidateColor(leader);
-  return interpolateOklab(getCandidateColor(leader), getCandidateColor(runnerUp), runnerUpWeight);
+  const margin = marginInPoints(leader, runnerUp);
+  if (margin === null) return getCandidateColor(leader);
+  return getCandidateColorForMargin(getCandidateColor(leader), marginBandFor(margin));
 }
 
-/** Descrição acessível da regra visual, sem confundir mistura de cores com percentual oficial de votos. */
+/** Descrição acessível do vencedor e da faixa de diferença em pontos percentuais. */
 export function describeVoteMix(candidates: ElectionCandidate[]): string {
   const [leader, runnerUp] = rankedVotes(candidates);
   if (!leader) return '';
   if (!runnerUp) return `Cor oficial de ${leader.ballotName}`;
 
   const margin = marginInPoints(leader, runnerUp);
-  if (runnerUpBlend(leader, runnerUp) < 0.005) {
-    return `Cor oficial de ${leader.ballotName}; vantagem de ${margin.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} pontos percentuais`;
-  }
-  return `Degradê entre ${leader.ballotName} e ${runnerUp.ballotName}; diferença de ${margin.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} pontos percentuais`;
+  if (margin === null) return `Cor oficial de ${leader.ballotName}; diferença para o segundo colocado indisponível`;
+  const formattedMargin = margin.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  return `${leader.ballotName}; diferença de ${formattedMargin} p.p. (${marginBandLabel(marginBandFor(margin))})`;
 }

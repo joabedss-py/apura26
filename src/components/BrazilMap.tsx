@@ -213,7 +213,7 @@ const MapFeature = memo(function MapFeature({
   const label = leader
     ? level === 'state'
       ? `${feature.label}. Candidato mais votado: ${leader.ballotName}, ${leader.percent.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%, ${voteFormatter.format(leader.votes)} votos.`
-      : `${feature.label}. Mistura proporcional de votos: ${distribution}. Líder: ${leader.ballotName}, ${leaderPercent}%, ${voteFormatter.format(leader.votes)} votos.`
+      : `${feature.label}. Candidato vencedor: ${leader.ballotName}. Diferença para o segundo colocado: ${distribution}. ${leaderPercent}%, ${voteFormatter.format(leader.votes)} votos.`
     : `${feature.label}. Selecione para consultar.`;
   return (
     <g className="map-feature-group">
@@ -237,7 +237,7 @@ const MapFeature = memo(function MapFeature({
           }
         }}
       >
-        <title>{leader ? `${feature.label} · ${level === 'state' ? `Mais votado: ${leader.ballotName}, ${leaderPercent}%, ${voteFormatter.format(leader.votes)} votos` : `${distribution} · líder: ${leader.ballotName}, ${leaderPercent}%, ${voteFormatter.format(leader.votes)} votos`}` : feature.label}</title>
+        <title>{leader ? `${feature.label} · ${level === 'state' ? `Mais votado: ${leader.ballotName}, ${leaderPercent}%, ${voteFormatter.format(leader.votes)} votos` : `${leader.ballotName} · diferença para o segundo colocado: ${distribution} · ${leaderPercent}%, ${voteFormatter.format(leader.votes)} votos`}` : feature.label}</title>
       </path>
       {level === 'state' && (
         <text x={feature.centerX} y={feature.centerY} className="map-unit-label" textAnchor="middle" dominantBaseline="central" aria-hidden="true">
