@@ -339,6 +339,25 @@ export default function App() {
     setResultMessage('');
   }, []);
 
+  const selectOffice = useCallback((nextOfficeCode: string) => {
+    territoryRequestRef.current += 1;
+    setSimulationActive(false);
+    setSelectedCandidateId(null);
+    clearCurrentResult();
+    setOfficeCode(nextOfficeCode);
+    setSelectedMunicipality(null);
+    if (nextOfficeCode !== '1' && nextOfficeCode !== '3') setRound('1');
+  }, [clearCurrentResult]);
+
+  const selectRound = useCallback((nextRound: ElectionRound) => {
+    if (nextRound === '2' && !canUseSecondRound) return;
+    territoryRequestRef.current += 1;
+    setSimulationActive(false);
+    setSelectedCandidateId(null);
+    clearCurrentResult();
+    setRound(nextRound);
+  }, [canUseSecondRound, clearCurrentResult]);
+
   useEffect(() => {
     let active = true;
     setMapStatus('loading');
@@ -885,17 +904,44 @@ export default function App() {
           </div>
           <div className="filters">
             <label htmlFor="office-select">CARGO</label>
-            <div className="select-wrap"><select id="office-select" value={officeCode} onChange={(event) => { territoryRequestRef.current += 1; const nextCode = event.target.value; setSimulationActive(false); setSelectedCandidateId(null); clearCurrentResult(); setOfficeCode(nextCode); setSelectedMunicipality(null); if (nextCode !== '1' && nextCode !== '3') setRound('1'); }}>
+            <div className="select-wrap"><select id="office-select" value={officeCode} onChange={(event) => selectOffice(event.target.value)}>
               {OFFICE_OPTIONS.map((option) => <option key={option.code} value={option.code}>{option.label}</option>)}
             </select><ChevronDown size={15} aria-hidden="true" /></div>
             <div className="round-switch" role="group" aria-label="Turno da eleição">
-              <button type="button" className={round === '1' ? 'round-option is-active' : 'round-option'} onClick={() => { territoryRequestRef.current += 1; setSimulationActive(false); setSelectedCandidateId(null); clearCurrentResult(); setRound('1'); }} aria-pressed={round === '1'}>1º</button>
-              <button type="button" className={round === '2' ? 'round-option is-active' : 'round-option'} onClick={() => { territoryRequestRef.current += 1; setSimulationActive(false); setSelectedCandidateId(null); clearCurrentResult(); setRound('2'); }} disabled={!canUseSecondRound} aria-pressed={round === '2'} title={canUseSecondRound ? 'Consultar o segundo turno' : 'O segundo turno está disponível para Presidente e Governador'}>2º <small>25 OUT</small></button>
+              <button type="button" className={round === '1' ? 'round-option is-active' : 'round-option'} onClick={() => selectRound('1')} aria-pressed={round === '1'}>1º</button>
+              <button type="button" className={round === '2' ? 'round-option is-active' : 'round-option'} onClick={() => selectRound('2')} disabled={!canUseSecondRound} aria-pressed={round === '2'} title={canUseSecondRound ? 'Consultar o segundo turno' : 'O segundo turno está disponível para Presidente e Governador'}>2º <small>25 OUT</small></button>
             </div>
           </div>
         </section>
 
         <section className={`workspace${mapFullscreen ? ' workspace--fullscreen' : ''}`} aria-label="Mapa e apuração eleitoral">
+          <div className="fullscreen-context" aria-label="Cargo e calendário dos turnos">
+            <label className="fullscreen-office-control">
+              <span>CARGO</span>
+              <div className="select-wrap">
+                <select value={officeCode} onChange={(event) => selectOffice(event.target.value)} aria-label="Selecionar cargo em tela inteira">
+                  {OFFICE_OPTIONS.map((option) => <option key={option.code} value={option.code}>{option.label}</option>)}
+                </select><ChevronDown size={14} aria-hidden="true" />
+              </div>
+            </label>
+            <div className="fullscreen-round-control" role="group" aria-label="Selecionar turno em tela inteira">
+              <button type="button" className={`fullscreen-round-option${round === '1' ? ' is-active' : ''}`} onClick={() => selectRound('1')} aria-pressed={round === '1'}>
+                <strong>1º TURNO</strong><small>04 OUT 2026 · RESULTADOS OFICIAIS</small>
+              </button>
+              <button type="button" className={`fullscreen-round-option${round === '2' ? ' is-active' : ''}`} onClick={() => selectRound('2')} disabled={!canUseSecondRound} aria-pressed={round === '2'} title={canUseSecondRound ? '2º turno · 25 de outubro de 2026, às 17h (Brasília)' : 'O segundo turno está disponível para Presidente e Governador'}>
+                <strong>2º TURNO</strong><small>25 OUT 2026 · 17H BRASÍLIA</small>
+              </button>
+            </div>
+            <p className={`fullscreen-round-status${round === '2' && !roundTwoStarted ? ' is-waiting' : ''}`} aria-live="polite">
+              {simulationVisible
+                ? 'Demonstração progressiva de resultados oficiais do 1º turno; nenhum voto é simulado.'
+                : round === '1'
+                  ? '1º turno: dados oficiais publicados pelo TSE.'
+                  : roundTwoStarted
+                    ? '2º turno em acompanhamento · atualização local a cada 30 segundos.'
+                    : '2º turno previsto para 25/10/2026 às 17h (horário de Brasília).'}
+            </p>
+          </div>
           <div className="map-panel" ref={mapPanelRef}>
             <div className="map-panel-heading">
               <div><div className="map-title-line"><MapPin size={16} /><h2>{regionLabel}</h2>{selectedUF && <span className="unit-chip">{selectedUF}</span>}</div><p>{mapDescription}</p></div>

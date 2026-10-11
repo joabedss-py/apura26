@@ -443,7 +443,6 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
   const handlePointerDown = (event: React.PointerEvent<SVGSVGElement>) => {
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     const svg = event.currentTarget;
-    svg.setPointerCapture(event.pointerId);
     const point = clientToMapPoint(svg, event.clientX, event.clientY);
     const pointers = pointersRef.current;
     if (pointers.size === 0) gestureMovedRef.current = false;
@@ -470,6 +469,9 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
 
     if (pointersRef.current.size >= 2 && gesture.type === 'pinch') {
       gestureMovedRef.current = true;
+      pointersRef.current.forEach((_, pointerId) => {
+        if (!svg.hasPointerCapture(pointerId)) svg.setPointerCapture(pointerId);
+      });
       const [first, second] = [...pointersRef.current.values()].slice(-2);
       const midpoint = { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
       const distance = Math.max(1, Math.hypot(second.x - first.x, second.y - first.y));
@@ -483,6 +485,7 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
       const dx = point.x - gesture.start.x;
       const dy = point.y - gesture.start.y;
       if (Math.hypot(dx, dy) > 4) {
+        if (!svg.hasPointerCapture(event.pointerId)) svg.setPointerCapture(event.pointerId);
         suppressClickRef.current = true;
         gestureMovedRef.current = true;
       }
