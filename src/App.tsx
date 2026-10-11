@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, ArrowUpRight, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Database, ExternalLink, Info, Layers3, LoaderCircle, MapPin, Maximize2, Minimize2, Pause, Play, Radio, RefreshCw, ShieldCheck } from 'lucide-react';
 import BrazilMap from './components/BrazilMap';
 import MunicipalityResultsPanel from './components/MunicipalityResultsPanel';
@@ -16,7 +16,6 @@ const ROUND_TWO_LOCAL_POLL_MS = 30_000;
 const ROUND_TWO_CITIES_POLL_MS = 180_000;
 const MUNICIPALITY_REQUEST_WORKERS = 32;
 const MUNICIPALITY_PROGRESS_BATCH = 50;
-const STATE_DRILLDOWN_GUARD_MS = 650;
 
 function formatInteger(value?: number | null): string {
   return value === null || value === undefined ? '—' : new Intl.NumberFormat('pt-BR').format(value);
@@ -258,7 +257,7 @@ export default function App() {
   const [simulationActive, setSimulationActive] = useState(false);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
   const [mapFullscreen, setMapFullscreen] = useState(false);
-  const [lastStateSelectionAt, setLastStateSelectionAt] = useState(0);
+  const territoryRequestRef = useRef(0);
 
   useEffect(() => {
     if (!mapFullscreen) return;
@@ -388,6 +387,12 @@ export default function App() {
       setResultStatus('empty');
       setResultMessage(`${selectedUF} não terá segundo turno para governador.`);
       setRefreshing(false);
+      return () => { active = false; };
+    }
+    if (selectedMunicipality && !selectedMunicipality.tseCode) {
+      setResult(null);
+      setResultStatus('loading');
+      setResultMessage('Identificando o código oficial deste município…');
       return () => { active = false; };
     }
     if (!selectedUF && officeCode !== '1') {
@@ -594,9 +599,9 @@ export default function App() {
 
   const handleMapSelect = useCallback(async (feature: GeoFeature) => {
     if (!selectedUF && !showAllMunicipalities) {
+      territoryRequestRef.current += 1;
       const unit = unitFromFeature(feature);
       if (unit) {
-        setLastStateSelectionAt(Date.now());
         setSimulationActive(false);
         setSelectedCandidateId(null);
         setOfficeCode('1');
@@ -608,27 +613,43 @@ export default function App() {
       return;
     }
     const ibgeCode = getIbgeAreaCode(feature).padStart(7, '0');
-    if (Date.now() - lastStateSelectionAt < STATE_DRILLDOWN_GUARD_MS || selectedMunicipality?.ibgeCode === ibgeCode) return;
+    if (selectedMunicipality?.ibgeCode === ibgeCode) return;
+    const requestId = ++territoryRequestRef.current;
     let reference = municipalityByIbge.get(ibgeCode);
     if (!reference) {
+      const unit = FEDERAL_UNITS.find((candidate) => candidate.ibgeCode === ibgeCode.slice(0, 2));
+      if (!unit) {
+        clearCurrentResult();
+        setResultStatus('error');
+        setResultMessage('Não foi possível identificar a UF desta geometria municipal.');
+        return;
+      }
+      reference = { ibgeCode, tseCode: '', name: getFeatureLabel(feature), uf: unit.uf };
+    }
+
+    setSimulationActive(false);
+    setSelectedCandidateId(null);
+    setSelectedUF(reference.uf);
+    setSelectedMunicipality(reference);
+    setShowAllMunicipalities(false);
+    clearCurrentResult();
+
+    if (!reference.tseCode) {
       try {
         const index = await getMunicipalityIndex(round);
+        if (territoryRequestRef.current !== requestId) return;
         setMunicipalityIndex(index);
         setMunicipalityIndexRound(round);
         reference = index.get(ibgeCode);
+        if (!reference) throw new Error('O cadastro do TSE não contém o código deste município.');
+        setSelectedMunicipality(reference);
       } catch {
+        if (territoryRequestRef.current !== requestId) return;
+        setResultStatus('error');
         setResultMessage('O TSE não disponibilizou o vínculo de códigos municipais neste momento.');
       }
     }
-    if (reference) {
-      setSimulationActive(false);
-      setSelectedCandidateId(null);
-      if (!selectedUF) setSelectedUF(reference.uf);
-      setSelectedMunicipality(reference);
-      setShowAllMunicipalities(false);
-      clearCurrentResult();
-    }
-  }, [clearCurrentResult, lastStateSelectionAt, municipalityByIbge, selectedMunicipality, selectedUF, showAllMunicipalities, round]);
+  }, [clearCurrentResult, getFeatureLabel, municipalityByIbge, selectedMunicipality, selectedUF, showAllMunicipalities, round]);
 
   const refresh = () => {
     if (round === '2' && !roundTwoStarted) return;
@@ -637,6 +658,7 @@ export default function App() {
     if (showAllMunicipalities || selectedUF) setMunicipalityRefreshKey((value) => value + 1);
   };
   const returnToCountry = () => {
+    territoryRequestRef.current += 1;
     setSimulationActive(false);
     setSelectedCandidateId(null);
     setSelectedUF(null);
@@ -645,6 +667,7 @@ export default function App() {
     clearCurrentResult();
   };
   const returnToState = () => {
+    territoryRequestRef.current += 1;
     setSimulationActive(false);
     setSelectedCandidateId(null);
     setSelectedMunicipality(null);
@@ -671,6 +694,7 @@ export default function App() {
   }, [summaryLeaders, municipalityResults, selectedUF, showAllMunicipalities]);
 
   const showCityMode = () => {
+    territoryRequestRef.current += 1;
     setSimulationActive(false);
     setSelectedCandidateId(null);
     setShowAllMunicipalities((value) => !value);
@@ -740,12 +764,14 @@ export default function App() {
       return;
     }
     if (simulationVisible) {
+      territoryRequestRef.current += 1;
       setSimulationActive(false);
       setSelectedCandidateId(null);
       setShowAllMunicipalities(false);
       setSelectedMunicipality(null);
       return;
     }
+    territoryRequestRef.current += 1;
     setSimulationActive(true);
     setSelectedCandidateId(null);
     setSelectedMunicipality(null);
@@ -799,12 +825,12 @@ export default function App() {
           </div>
           <div className="filters">
             <label htmlFor="office-select">CARGO</label>
-            <div className="select-wrap"><select id="office-select" value={officeCode} onChange={(event) => { const nextCode = event.target.value; setSimulationActive(false); setSelectedCandidateId(null); clearCurrentResult(); setOfficeCode(nextCode); setSelectedMunicipality(null); if (nextCode !== '1' && nextCode !== '3') setRound('1'); }}>
+            <div className="select-wrap"><select id="office-select" value={officeCode} onChange={(event) => { territoryRequestRef.current += 1; const nextCode = event.target.value; setSimulationActive(false); setSelectedCandidateId(null); clearCurrentResult(); setOfficeCode(nextCode); setSelectedMunicipality(null); if (nextCode !== '1' && nextCode !== '3') setRound('1'); }}>
               {OFFICE_OPTIONS.map((option) => <option key={option.code} value={option.code}>{option.label}</option>)}
             </select><ChevronDown size={15} aria-hidden="true" /></div>
             <div className="round-switch" role="group" aria-label="Turno da eleição">
-              <button type="button" className={round === '1' ? 'round-option is-active' : 'round-option'} onClick={() => { setSimulationActive(false); setSelectedCandidateId(null); clearCurrentResult(); setRound('1'); }} aria-pressed={round === '1'}>1º</button>
-              <button type="button" className={round === '2' ? 'round-option is-active' : 'round-option'} onClick={() => { setSimulationActive(false); setSelectedCandidateId(null); clearCurrentResult(); setRound('2'); }} disabled={!canUseSecondRound} aria-pressed={round === '2'} title={canUseSecondRound ? 'Consultar o segundo turno' : 'O segundo turno está disponível para Presidente e Governador'}>2º <small>25 OUT</small></button>
+              <button type="button" className={round === '1' ? 'round-option is-active' : 'round-option'} onClick={() => { territoryRequestRef.current += 1; setSimulationActive(false); setSelectedCandidateId(null); clearCurrentResult(); setRound('1'); }} aria-pressed={round === '1'}>1º</button>
+              <button type="button" className={round === '2' ? 'round-option is-active' : 'round-option'} onClick={() => { territoryRequestRef.current += 1; setSimulationActive(false); setSelectedCandidateId(null); clearCurrentResult(); setRound('2'); }} disabled={!canUseSecondRound} aria-pressed={round === '2'} title={canUseSecondRound ? 'Consultar o segundo turno' : 'O segundo turno está disponível para Presidente e Governador'}>2º <small>25 OUT</small></button>
             </div>
           </div>
         </section>
@@ -819,7 +845,7 @@ export default function App() {
                   <select id="map-uf-select" value="" onChange={(event) => {
                     const uf = event.target.value;
                     if (!uf) return;
-                    setLastStateSelectionAt(Date.now());
+                    territoryRequestRef.current += 1;
                     setSimulationActive(false);
                     setSelectedCandidateId(null);
                     setOfficeCode('1');
@@ -856,7 +882,7 @@ export default function App() {
                   selectedKey={selectedUF && selectedMunicipality ? selectedMunicipality.ibgeCode : undefined}
                   onSelect={handleMapSelect}
                   onSelectUF={(uf) => {
-                    setLastStateSelectionAt(Date.now());
+                    territoryRequestRef.current += 1;
                     setSimulationActive(false);
                     setSelectedCandidateId(null);
                     setOfficeCode('1');
@@ -867,7 +893,7 @@ export default function App() {
                   }}
                 />
               ) : <div className="map-placeholder">{mapStatus === 'loading' ? <><LoaderCircle size={24} className="spin" /><span>Carregando malha oficial do IBGE…</span></> : <><Info size={20} /><span>{mapMessage || 'Não foi possível carregar o mapa.'}</span></>}</div>}
-              {selectedUF && selectedMunicipality && <div className="map-selection"><span className="selection-pin"><MapPin size={14} /></span><div aria-live="polite"><strong>{selectedMunicipality.name}</strong><span>{selectedMunicipality.uf} · código TSE {selectedMunicipality.tseCode}</span><span className="map-selection-result" style={selectedMunicipalityLeader ? { color: getCandidateColor(selectedMunicipalityLeader) } : undefined} title={municipalitySelectionSummary}>{municipalitySelectionSummary}</span></div></div>}
+              {selectedUF && selectedMunicipality && <div className="map-selection"><span className="selection-pin"><MapPin size={14} /></span><div aria-live="polite"><strong>{selectedMunicipality.name}</strong><span>{selectedMunicipality.uf} · {selectedMunicipality.tseCode ? `código TSE ${selectedMunicipality.tseCode}` : 'identificando localidade oficial…'}</span><span className="map-selection-result" style={selectedMunicipalityLeader ? { color: getCandidateColor(selectedMunicipalityLeader) } : undefined} title={municipalitySelectionSummary}>{municipalitySelectionSummary}</span></div></div>}
             </div>
             <div className="map-footer">
               <div className="map-legend">
@@ -905,6 +931,7 @@ export default function App() {
               round={round}
               roundTwoStarted={roundTwoStarted}
               onSelect={(municipality) => {
+                territoryRequestRef.current += 1;
                 setSimulationActive(false);
                 setSelectedCandidateId(null);
                 clearCurrentResult();

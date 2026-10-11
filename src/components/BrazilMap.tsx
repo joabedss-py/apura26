@@ -222,8 +222,8 @@ const MapFeature = memo(function MapFeature({
         className={`map-feature${selected ? ' is-selected' : ''}${isDimmed ? ' is-dimmed' : ''}`}
         fill={fill}
         fillOpacity={fillOpacity}
-        stroke={selected ? '#e6fff1' : level === 'municipality' ? '#07110d' : '#8aa79b'}
-        strokeWidth={selected ? 1.9 : level === 'state' ? 1.15 : 1.05}
+        stroke={selected ? '#9fffc7' : level === 'municipality' ? '#07110d' : '#8aa79b'}
+        strokeWidth={selected ? 2.35 : level === 'state' ? 1.15 : 1.05}
         vectorEffect="non-scaling-stroke"
         tabIndex={0}
         role="button"
@@ -251,6 +251,7 @@ const MapFeature = memo(function MapFeature({
 export default function BrazilMap({ data, level, getKey, getLabel, voteShares, unitBoundaries, selectedUF, selectedCandidateId, candidateFocusReady = true, selectedKey, onSelect, onSelectUF }: BrazilMapProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const viewGroupRef = useRef<SVGGElement | null>(null);
+  const viewAnimationRef = useRef<number | null>(null);
   const wheelCommitTimerRef = useRef<number | null>(null);
   const pointersRef = useRef(new Map<number, MapPoint>());
   const gestureRef = useRef<{ type: 'pan'; start: MapPoint; view: ViewTransform } | { type: 'pinch'; startDistance: number; startScale: number; anchor: MapPoint } | null>(null);
@@ -295,17 +296,52 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
 
   const updateView = useCallback((next: ViewTransform) => {
     const clamped = clampTransform(next);
-    viewRef.current = clamped;
-    setViewRevision((revision) => revision + 1);
+    const start = viewRef.current;
+    if (viewAnimationRef.current !== null) window.cancelAnimationFrame(viewAnimationRef.current);
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      viewAnimationRef.current = null;
+      viewRef.current = clamped;
+      viewGroupRef.current?.setAttribute('transform', `translate(${clamped.tx} ${clamped.ty}) scale(${clamped.scale})`);
+      setViewRevision((revision) => revision + 1);
+      return;
+    }
+    const startedAt = performance.now();
+    const duration = 620;
+    const animate = (time: number) => {
+      const progress = Math.min(1, (time - startedAt) / duration);
+      const eased = 1 - (1 - progress) ** 3;
+      const current = {
+        scale: start.scale + (clamped.scale - start.scale) * eased,
+        tx: start.tx + (clamped.tx - start.tx) * eased,
+        ty: start.ty + (clamped.ty - start.ty) * eased,
+      };
+      viewRef.current = current;
+      viewGroupRef.current?.setAttribute('transform', `translate(${current.tx} ${current.ty}) scale(${current.scale})`);
+      if (progress < 1) {
+        viewAnimationRef.current = window.requestAnimationFrame(animate);
+      } else {
+        viewAnimationRef.current = null;
+        setViewRevision((revision) => revision + 1);
+      }
+    };
+    viewAnimationRef.current = window.requestAnimationFrame(animate);
   }, []);
 
   const applyGestureView = useCallback((next: ViewTransform) => {
+    if (viewAnimationRef.current !== null) {
+      window.cancelAnimationFrame(viewAnimationRef.current);
+      viewAnimationRef.current = null;
+    }
     const clamped = clampTransform(next);
     viewRef.current = clamped;
     viewGroupRef.current?.setAttribute('transform', `translate(${clamped.tx} ${clamped.ty}) scale(${clamped.scale})`);
   }, []);
 
   const commitView = useCallback(() => setViewRevision((revision) => revision + 1), []);
+
+  useEffect(() => () => {
+    if (viewAnimationRef.current !== null) window.cancelAnimationFrame(viewAnimationRef.current);
+  }, []);
 
   useEffect(() => {
     const territoryScope = [level, selectedUF ?? '', selectedKey ?? ''].join('|');
