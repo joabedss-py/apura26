@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, LoaderCircle, Search, ShieldCheck } from 'lucide-react';
 import type { ElectionRound, MunicipalityOverviewRow, MunicipalityRef } from '../types';
 import { getCandidateColor } from '../services/colors';
+import { formatCandidateSuffix } from '../services/candidate-identity';
 
 const PAGE_SIZE = 40;
 
@@ -106,7 +107,7 @@ export default function MunicipalityResultsPanel({
             <button type="button" className="city-result-row" key={row.municipality.ibgeCode} onClick={() => onSelect(row.municipality)} aria-label={`Consultar ${row.municipality.name}, ${row.municipality.uf}`}>
               <span className="city-result-place"><strong>{row.municipality.name}</strong><small>{row.municipality.uf}</small></span>
               {row.status === 'ready' && row.candidate && row.countedSections !== 0 && !isWaitingForRound ? (
-                <span className="city-result-leader"><i style={{ backgroundColor: color }} /><strong>{row.candidate.ballotName}</strong><small>{formatInteger(row.candidate.votes)} votos</small></span>
+                <span className="city-result-leader"><i style={{ backgroundColor: color }} /><strong>{row.candidate.ballotName}</strong><small className="city-result-identity">{formatCandidateSuffix(row.candidate)}</small><small className="city-result-votes">{formatInteger(row.candidate.votes)} votos</small></span>
               ) : <span className={`city-result-pending${row.status === 'error' ? ' is-error' : ''}`}>{row.status === 'loading' && !isWaitingForRound && <LoaderCircle size={12} className="spin" />}{resultLabel}</span>}
               <span className="city-result-percent" style={{ color: row.status === 'ready' && row.countedSections !== 0 && !isWaitingForRound ? color : undefined }}>{row.status === 'ready' && row.candidate && row.countedSections !== 0 && !isWaitingForRound ? formatPercent(row.candidate.percent) : '—'}</span>
             </button>

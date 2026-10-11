@@ -4,6 +4,7 @@ import type { ElectionCandidate, FeatureCollection, GeoFeature, Position } from 
 import { FEDERAL_UNITS, findUnitByCode } from '../data/states';
 import { getIbgeAreaCode } from '../services/ibge';
 import { getCandidateColor } from '../services/colors';
+import { candidateMatchesSelection, formatCandidateLabel } from '../services/candidate-identity';
 import { describeVoteMix, mixCandidateColors } from '../services/vote-color';
 
 interface BrazilMapProps {
@@ -15,7 +16,9 @@ interface BrazilMapProps {
   unitBoundaries?: FeatureCollection | null;
   selectedUF?: string | null;
   selectedCandidateId?: string | null;
+  selectedCandidate?: ElectionCandidate | null;
   candidateFocusReady?: boolean;
+  suspended?: boolean;
   selectedKey?: string;
   onSelect: (feature: GeoFeature) => void;
   onSelectUF?: (uf: string) => void;
@@ -187,12 +190,23 @@ function clampTransform(value: ViewTransform): ViewTransform {
   };
 }
 
+function syncUnitLabelScale(group: SVGGElement | null, scale: number): void {
+  if (!group) return;
+  group.querySelectorAll<SVGGElement>('.map-uf-label').forEach((label) => {
+    const x = label.getAttribute('data-map-x');
+    const y = label.getAttribute('data-map-y');
+    if (x !== null && y !== null) label.setAttribute('transform', `translate(${x} ${y}) scale(${1 / scale})`);
+  });
+}
+
 const MapFeature = memo(function MapFeature({
   feature,
   level,
   shares,
   selected,
   selectedCandidateId,
+  selectedCandidate,
+  disabled,
   onSelect,
 }: {
   feature: ProjectedFeature;
@@ -200,10 +214,13 @@ const MapFeature = memo(function MapFeature({
   shares?: ElectionCandidate[];
   selected: boolean;
   selectedCandidateId?: string | null;
+  selectedCandidate?: ElectionCandidate | null;
+  disabled: boolean;
   onSelect: (feature: GeoFeature) => void;
 }) {
   const leader = shares?.[0];
-  const isDimmed = Boolean(selectedCandidateId && leader?.id !== selectedCandidateId);
+  const isCandidateLeader = candidateMatchesSelection(leader, selectedCandidate, selectedCandidateId);
+  const isDimmed = Boolean(selectedCandidateId && !isCandidateLeader);
   const fill = level === 'state'
     ? leader ? getCandidateColor(leader) : '#29413b'
     : mixCandidateColors(shares ?? []) ?? '#29413b';
@@ -212,32 +229,34 @@ const MapFeature = memo(function MapFeature({
   const leaderPercent = leader?.percent.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const label = leader
     ? level === 'state'
-      ? `${feature.label}. Candidato mais votado: ${leader.ballotName}, ${leader.percent.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%, ${voteFormatter.format(leader.votes)} votos.`
-      : `${feature.label}. Candidato vencedor: ${leader.ballotName}. Diferença para o segundo colocado: ${distribution}. ${leaderPercent}%, ${voteFormatter.format(leader.votes)} votos.`
+      ? `${feature.label}. Candidato mais votado: ${formatCandidateLabel(leader)}, ${leader.percent.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%, ${voteFormatter.format(leader.votes)} votos.`
+      : `${feature.label}. Candidato vencedor: ${formatCandidateLabel(leader)}. Diferença para o segundo colocado: ${distribution}. ${leaderPercent}%, ${voteFormatter.format(leader.votes)} votos.`
     : `${feature.label}. Selecione para consultar.`;
   return (
     <g className="map-feature-group">
       <path
         d={feature.path}
-        className={`map-feature${selected ? ' is-selected' : ''}${isDimmed ? ' is-dimmed' : ''}`}
+        className={`map-feature${selected ? ' is-selected' : ''}${isCandidateLeader ? ' is-candidate-leader' : ''}${isDimmed ? ' is-dimmed' : ''}`}
         fill={fill}
         fillOpacity={fillOpacity}
-        stroke={selected ? '#9fffc7' : level === 'municipality' ? '#07110d' : '#8aa79b'}
-        strokeWidth={selected ? 2.35 : level === 'state' ? 1.15 : 1.05}
+        stroke={selected ? '#9fffc7' : isCandidateLeader ? '#e1fff0' : level === 'municipality' ? '#07110d' : '#8aa79b'}
+        strokeWidth={selected ? 2.35 : isCandidateLeader ? 1.6 : level === 'state' ? 1.15 : 1.05}
         vectorEffect="non-scaling-stroke"
-        tabIndex={0}
+        tabIndex={disabled ? -1 : 0}
         role="button"
         aria-pressed={selected}
+        aria-disabled={disabled}
         aria-label={label}
-        onClick={() => onSelect(feature.source)}
+        onClick={disabled ? undefined : () => onSelect(feature.source)}
         onKeyDown={(event) => {
+          if (disabled) return;
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault();
             onSelect(feature.source);
           }
         }}
       >
-        <title>{leader ? `${feature.label} · ${level === 'state' ? `Mais votado: ${leader.ballotName}, ${leaderPercent}%, ${voteFormatter.format(leader.votes)} votos` : `${leader.ballotName} · diferença para o segundo colocado: ${distribution} · ${leaderPercent}%, ${voteFormatter.format(leader.votes)} votos`}` : feature.label}</title>
+        <title>{leader ? `${feature.label} · ${level === 'state' ? `Mais votado: ${formatCandidateLabel(leader)}, ${leaderPercent}%, ${voteFormatter.format(leader.votes)} votos` : `${formatCandidateLabel(leader)} · diferença para o segundo colocado: ${distribution} · ${leaderPercent}%, ${voteFormatter.format(leader.votes)} votos`}` : feature.label}</title>
       </path>
       {level === 'state' && (
         <text x={feature.centerX} y={feature.centerY} className="map-unit-label" textAnchor="middle" dominantBaseline="central" aria-hidden="true">
@@ -248,11 +267,14 @@ const MapFeature = memo(function MapFeature({
   );
 });
 
-export default function BrazilMap({ data, level, getKey, getLabel, voteShares, unitBoundaries, selectedUF, selectedCandidateId, candidateFocusReady = true, selectedKey, onSelect, onSelectUF }: BrazilMapProps) {
+export default function BrazilMap({ data, level, getKey, getLabel, voteShares, unitBoundaries, selectedUF, selectedCandidateId, selectedCandidate, candidateFocusReady = true, suspended = false, selectedKey, onSelect, onSelectUF }: BrazilMapProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const viewGroupRef = useRef<SVGGElement | null>(null);
   const viewAnimationRef = useRef<number | null>(null);
   const wheelCommitTimerRef = useRef<number | null>(null);
+  const zoomInButtonRef = useRef<HTMLButtonElement | null>(null);
+  const zoomOutButtonRef = useRef<HTMLButtonElement | null>(null);
+  const zoomLevelRef = useRef<HTMLSpanElement | null>(null);
   const pointersRef = useRef(new Map<number, MapPoint>());
   const gestureRef = useRef<{ type: 'pan'; start: MapPoint; view: ViewTransform } | { type: 'pinch'; startDistance: number; startScale: number; anchor: MapPoint } | null>(null);
   const suppressClickRef = useRef(false);
@@ -260,6 +282,14 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
   const [, setViewRevision] = useState(0);
   const viewRef = useRef<ViewTransform>({ scale: 1, tx: 0, ty: 0 });
   const autoFocusScopeRef = useRef<string | null>(null);
+
+  const writeViewToDom = useCallback((view: ViewTransform) => {
+    viewGroupRef.current?.setAttribute('transform', `translate(${view.tx} ${view.ty}) scale(${view.scale})`);
+    syncUnitLabelScale(viewGroupRef.current, view.scale);
+    if (zoomLevelRef.current) zoomLevelRef.current.textContent = `${Math.round(view.scale * 100)}%`;
+    if (zoomInButtonRef.current) zoomInButtonRef.current.disabled = view.scale >= MAX_ZOOM;
+    if (zoomOutButtonRef.current) zoomOutButtonRef.current.disabled = view.scale <= MIN_ZOOM;
+  }, []);
 
   const projection = useMemo(() => buildProjection(level === 'municipality' && selectedUF && unitBoundaries ? unitBoundaries.features : data.features), [data, level, selectedUF, unitBoundaries]);
   const features = useMemo<ProjectedFeature[]>(() => data.features.map((feature) => {
@@ -301,7 +331,7 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       viewAnimationRef.current = null;
       viewRef.current = clamped;
-      viewGroupRef.current?.setAttribute('transform', `translate(${clamped.tx} ${clamped.ty}) scale(${clamped.scale})`);
+      writeViewToDom(clamped);
       setViewRevision((revision) => revision + 1);
       return;
     }
@@ -316,7 +346,7 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
         ty: start.ty + (clamped.ty - start.ty) * eased,
       };
       viewRef.current = current;
-      viewGroupRef.current?.setAttribute('transform', `translate(${current.tx} ${current.ty}) scale(${current.scale})`);
+      writeViewToDom(current);
       if (progress < 1) {
         viewAnimationRef.current = window.requestAnimationFrame(animate);
       } else {
@@ -325,7 +355,7 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
       }
     };
     viewAnimationRef.current = window.requestAnimationFrame(animate);
-  }, []);
+  }, [writeViewToDom]);
 
   const applyGestureView = useCallback((next: ViewTransform) => {
     if (viewAnimationRef.current !== null) {
@@ -334,8 +364,8 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
     }
     const clamped = clampTransform(next);
     viewRef.current = clamped;
-    viewGroupRef.current?.setAttribute('transform', `translate(${clamped.tx} ${clamped.ty}) scale(${clamped.scale})`);
-  }, []);
+    writeViewToDom(clamped);
+  }, [writeViewToDom]);
 
   const commitView = useCallback(() => setViewRevision((revision) => revision + 1), []);
 
@@ -344,6 +374,7 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
   }, []);
 
   useEffect(() => {
+    if (suspended) return;
     const territoryScope = [level, selectedUF ?? '', selectedKey ?? ''].join('|');
     const territoryFocusScope = `${territoryScope}|territory`;
     if (level === 'municipality' && selectedUF && !unitBoundaries) return;
@@ -374,7 +405,7 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
       return;
     }
     if (selectedCandidateId) {
-      const leadingFeatures = features.filter((feature) => voteShares?.get(feature.key)?.[0]?.id === selectedCandidateId);
+      const leadingFeatures = features.filter((feature) => candidateMatchesSelection(voteShares?.get(feature.key)?.[0], selectedCandidate, selectedCandidateId));
       const leadingBounds = mergeBounds(leadingFeatures.map((feature) => feature.bounds));
       const boundsSignature = leadingBounds
         ? [leadingBounds.minX, leadingBounds.minY, leadingBounds.maxX, leadingBounds.maxY].map((value) => value.toFixed(2)).join(':')
@@ -386,7 +417,7 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
         ?? mergeBounds(features.map((feature) => feature.bounds));
       const target = leadingBounds ?? fallback;
       if (!target) return;
-      updateView(viewForBounds(target, leadingBounds ? MIN_ZOOM : 1.3));
+      updateView(viewForBounds(target, 1.3));
       autoFocusScopeRef.current = candidateFocusScope;
       return;
     }
@@ -394,7 +425,7 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
     if (autoFocusScopeRef.current === territoryFocusScope) return;
     autoFocusScopeRef.current = territoryFocusScope;
     focusTerritory();
-  }, [data, level, selectedUF, selectedKey, selectedCandidateId, candidateFocusReady, features, projectedUnits, unitBoundaries, voteShares, updateView]);
+  }, [data, level, selectedUF, selectedKey, selectedCandidateId, selectedCandidate, candidateFocusReady, suspended, features, projectedUnits, unitBoundaries, voteShares, updateView]);
 
   const zoomAt = useCallback((anchor: MapPoint, factor: number) => {
     const current = viewRef.current;
@@ -511,6 +542,8 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
         className={`brazil-map brazil-map--${level}`}
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
         role="group"
+        aria-hidden={suspended || undefined}
+        aria-busy={suspended}
         aria-label={level === 'state' ? 'Mapa interativo do Brasil por estado. Arraste para mover; use mais e menos para aproximar.' : selectedUF ? `Mapa dos municípios de ${selectedUF}; as outras UFs aparecem escurecidas. Arraste para mover e use os controles para aproximar.` : 'Mapa interativo de municípios. Arraste para mover; use mais e menos para aproximar.'}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -546,6 +579,8 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
               shares={voteShares?.get(feature.key)}
               selected={feature.key === selectedKey}
               selectedCandidateId={selectedCandidateId}
+              selectedCandidate={selectedCandidate}
+              disabled={suspended}
               onSelect={onSelect}
             />
           ))}
@@ -562,10 +597,12 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
                 key={`uf-label-${unit.uf}`}
                 className={`map-uf-label${selectedUF && !isCurrent ? ' is-muted' : ''}${isCurrent ? ' is-current' : ''}`}
                 transform={`translate(${unit.centerX + offsetX} ${unit.centerY + offsetY}) scale(${1 / renderedView.scale})`}
-        role={canSelect ? 'button' : undefined}
-        tabIndex={canSelect ? 0 : -1}
-        aria-pressed={canSelect ? isCurrent : undefined}
-        aria-label={canSelect ? `${unit.uf}, ${unit.name}. Ver votação nominal desta UF.` : undefined}
+                data-map-x={unit.centerX + offsetX}
+                data-map-y={unit.centerY + offsetY}
+                role={canSelect ? 'button' : undefined}
+                tabIndex={canSelect ? 0 : -1}
+                aria-pressed={canSelect ? isCurrent : undefined}
+                aria-label={canSelect ? `${unit.uf}, ${unit.name}. Ver votação nominal desta UF.` : undefined}
                 pointerEvents={canSelect ? 'auto' : 'none'}
                 onPointerDown={canSelect ? (event) => event.stopPropagation() : undefined}
                 onClick={canSelect ? (event) => { event.stopPropagation(); onSelectUF?.(unit.uf); } : undefined}
@@ -586,9 +623,9 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
         </g>
       </svg>
       <div className="map-zoom-controls" role="group" aria-label="Controles de zoom do mapa">
-        <button type="button" aria-label="Aproximar mapa" title="Aproximar" onClick={() => zoomAtCenter(1.35)} disabled={renderedView.scale >= MAX_ZOOM}><Plus size={17} /></button>
-        <span className="map-zoom-level" aria-live="polite">{Math.round(renderedView.scale * 100)}%</span>
-        <button type="button" aria-label="Afastar mapa" title="Afastar" onClick={() => zoomAtCenter(1 / 1.35)} disabled={renderedView.scale <= MIN_ZOOM}><Minus size={17} /></button>
+        <button ref={zoomInButtonRef} type="button" aria-label="Aproximar mapa" title="Aproximar" onClick={() => zoomAtCenter(1.35)} disabled={renderedView.scale >= MAX_ZOOM}><Plus size={17} /></button>
+        <span ref={zoomLevelRef} className="map-zoom-level" aria-live="off">{Math.round(renderedView.scale * 100)}%</span>
+        <button ref={zoomOutButtonRef} type="button" aria-label="Afastar mapa" title="Afastar" onClick={() => zoomAtCenter(1 / 1.35)} disabled={renderedView.scale <= MIN_ZOOM}><Minus size={17} /></button>
         <button type="button" className="map-zoom-reset" aria-label="Restaurar enquadramento do mapa" title="Restaurar enquadramento" onClick={() => updateView({ scale: 1, tx: 0, ty: 0 })}><LocateFixed size={16} /></button>
       </div>
     </div>

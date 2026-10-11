@@ -5,6 +5,7 @@ import MunicipalityResultsPanel from './components/MunicipalityResultsPanel';
 import { FEDERAL_UNITS, GOVERNOR_RUNOFF_UFS, OFFICE_OPTIONS, findUnitByCode } from './data/states';
 import { getAllMunicipalitiesMap, getFederalUnitsMap, getIbgeAreaCode, getMunicipalitiesMap } from './services/ibge';
 import { getCandidateColor } from './services/colors';
+import { formatCandidateLabel, formatCandidateSuffix } from './services/candidate-identity';
 import { getCandidateColorForMargin, type MarginBand } from './services/vote-color';
 import { getElectionResults, getMunicipalityIndex } from './services/tse';
 import type { ElectionCandidate, ElectionResult, ElectionRound, FeatureCollection, GeoFeature, LoadState, MunicipalityOverviewRow, MunicipalityRef } from './types';
@@ -104,6 +105,7 @@ function CandidateList({ result, waitingForCount = false, selectedCandidateId, o
       {result.candidates.map((candidate, index) => {
         const color = getCandidateColor(candidate);
         const focused = selectedCandidateId === candidate.id;
+        const candidateDetails = formatCandidateSuffix(candidate);
         return (
           <button
             type="button"
@@ -112,12 +114,12 @@ function CandidateList({ result, waitingForCount = false, selectedCandidateId, o
             onClick={() => onSelectCandidate(candidate)}
             aria-pressed={focused}
             disabled={waitingForCount}
-            title={`Focar o mapa nas áreas onde ${candidate.ballotName} lidera`}
+            title={`Focar o mapa nas áreas onde ${formatCandidateLabel(candidate)} lidera`}
             style={{ borderLeftColor: focused ? color : 'transparent' }}
           >
             <div className="candidate-rank" style={{ color }}>{String(index + 1).padStart(2, '0')}</div>
             <div className="candidate-main">
-              <div className="candidate-name-line"><span className="candidate-color-dot" style={{ backgroundColor: color }} aria-hidden="true" /><strong>{candidate.ballotName}</strong><span className="party-tag">{candidate.party || `Nº ${candidate.number}`}</span></div>
+              <div className="candidate-name-line"><span className="candidate-color-dot" style={{ backgroundColor: color }} aria-hidden="true" /><strong>{candidate.ballotName}</strong>{candidateDetails && <span className="party-tag">{candidateDetails}</span>}</div>
               <div className="candidate-meter"><span style={{ width: waitingForCount ? '0%' : `${Math.max(0, Math.min(100, candidate.votes / maximum * 100))}%`, backgroundColor: color }} /></div>
               <div className="candidate-foot"><span className="candidate-votes">{waitingForCount ? 'Aguardando apuração' : `${formatInteger(candidate.votes)} votos`}</span><span className="candidate-status">{candidate.status || 'Candidatura'}</span></div>
             </div>
@@ -191,7 +193,7 @@ function SummaryPanel({
         <div className="municipality-focus-votes">
           {municipalityCounted && municipalityLeader ? <>
             <span className="municipality-focus-kicker"><i style={{ backgroundColor: getCandidateColor(municipalityLeader) }} /> LÍDER LOCAL</span>
-            <strong>{municipalityLeader.ballotName}</strong>
+            <strong>{formatCandidateLabel(municipalityLeader)}</strong>
             <b>{formatInteger(municipalityLeader.votes)} votos</b>
             <small>{formatPercent(municipalityLeader.percent)} dos votos nominais</small>
           </> : <span className={`municipality-focus-state${status === 'error' ? ' is-error' : ''}`}>
@@ -229,13 +231,13 @@ function SummaryPanel({
         <div className="state-leaders">
           <StatusPill status={leadersLoading ? 'loading' : leaders.size ? 'ok' : 'warning'} text={leadersLoading ? 'CONSULTANDO UFs' : `${leaders.size} UFs com disputa`} />
           <div className="empty-state empty-state--compact"><div className="empty-icon"><MapPin size={19} /></div><h3>Governador: resultados por UF</h3><p>O 2º turno ocorre no Acre, Amazonas, Espírito Santo, Rio Grande do Norte, Tocantins e Distrito Federal. Selecione uma dessas UFs para consultar a apuração local.</p></div>
-          <div className="state-leader-list">{[...leaders.entries()].map(([uf, candidate]) => <div key={uf}><span>{uf}</span><strong>{candidate.ballotName}</strong><em>{formatPercent(candidate.percent)}</em></div>)}</div>
+          <div className="state-leader-list">{[...leaders.entries()].map(([uf, candidate]) => <div key={uf}><span>{uf}</span><strong>{formatCandidateLabel(candidate)}</strong><em>{formatPercent(candidate.percent)}</em></div>)}</div>
         </div>
       ) : national && !selectedUF && officeCode !== '1' ? (
         <div className="state-leaders">
           <StatusPill status={leadersLoading ? 'loading' : leaders.size ? 'ok' : 'warning'} text={leadersLoading ? 'CONSULTANDO UFs' : `${leaders.size} UFs com dados`} />
           <div className="empty-state empty-state--compact"><div className="empty-icon"><MapPin size={19} /></div><h3>Uma disputa em cada estado</h3><p>Os percentuais não são somados nacionalmente. Selecione uma UF para consultar candidaturas, votos e apuração de {officeLabel.toLowerCase()}.</p></div>
-          <div className="state-leader-list">{[...leaders.entries()].slice(0, 8).map(([uf, candidate]) => <div key={uf}><span>{uf}</span><strong>{candidate.ballotName}</strong><em>{formatPercent(candidate.percent)}</em></div>)}</div>
+          <div className="state-leader-list">{[...leaders.entries()].slice(0, 8).map(([uf, candidate]) => <div key={uf}><span>{uf}</span><strong>{formatCandidateLabel(candidate)}</strong><em>{formatPercent(candidate.percent)}</em></div>)}</div>
         </div>
       ) : (
         <EmptyResults officeLabel={officeLabel} officeCode={officeCode} national={!selectedUF} selectedUF={selectedUF} status={status} message={message} round={round} roundTwoStarted={roundTwoStarted} />
@@ -275,6 +277,7 @@ export default function App() {
   const [selectedMunicipality, setSelectedMunicipality] = useState<MunicipalityRef | null>(null);
   const [showAllMunicipalities, setShowAllMunicipalities] = useState(false);
   const [mapData, setMapData] = useState<FeatureCollection | null>(null);
+  const [mapDataScope, setMapDataScope] = useState<{ selectedUF: string | null; showAllMunicipalities: boolean }>({ selectedUF: null, showAllMunicipalities: false });
   const [mapStatus, setMapStatus] = useState<LoadState>('loading');
   const [mapMessage, setMapMessage] = useState('');
   const [unitBoundaries, setUnitBoundaries] = useState<FeatureCollection | null>(null);
@@ -297,6 +300,7 @@ export default function App() {
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
   const [mapFullscreen, setMapFullscreen] = useState(false);
   const territoryRequestRef = useRef(0);
+  const mapPanelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!mapFullscreen) return;
@@ -338,7 +342,6 @@ export default function App() {
   useEffect(() => {
     let active = true;
     setMapStatus('loading');
-    setMapData(null);
     setMapMessage('');
     const request = selectedUF
       ? getMunicipalitiesMap(selectedUF)
@@ -348,6 +351,7 @@ export default function App() {
     request.then((data) => {
       if (active) {
         setMapData(data);
+        setMapDataScope({ selectedUF, showAllMunicipalities });
         setMapStatus(data.features.length ? 'ready' : 'empty');
       }
     }).catch((error: unknown) => {
@@ -626,15 +630,15 @@ export default function App() {
   const summaryLeaders = useMemo(() => new Map([...leaders].map(([uf, candidates]) => [uf, candidates[0]]).filter((entry): entry is [string, ElectionCandidate] => Boolean(entry[1]))), [leaders]);
 
   const getFeatureKey = useCallback((feature: GeoFeature) => {
-    if (!selectedUF && !showAllMunicipalities) return unitFromFeature(feature)?.uf ?? getIbgeAreaCode(feature);
+    if (!mapDataScope.selectedUF && !mapDataScope.showAllMunicipalities) return unitFromFeature(feature)?.uf ?? getIbgeAreaCode(feature);
     return getIbgeAreaCode(feature).padStart(7, '0');
-  }, [selectedUF, showAllMunicipalities]);
+  }, [mapDataScope]);
 
   const getFeatureLabel = useCallback((feature: GeoFeature) => {
-    if (!selectedUF && !showAllMunicipalities) return unitFromFeature(feature)?.name ?? 'Unidade da Federação';
+    if (!mapDataScope.selectedUF && !mapDataScope.showAllMunicipalities) return unitFromFeature(feature)?.name ?? 'Unidade da Federação';
     const code = getIbgeAreaCode(feature).padStart(7, '0');
     return municipalityByIbge.get(code)?.name ?? String(feature.properties.nome ?? feature.properties.nm ?? `Município ${code}`);
-  }, [municipalityByIbge, selectedUF, showAllMunicipalities]);
+  }, [mapDataScope, municipalityByIbge]);
 
   const handleMapSelect = useCallback(async (feature: GeoFeature) => {
     if (!selectedUF && !showAllMunicipalities) {
@@ -742,6 +746,17 @@ export default function App() {
   const cityWinners = selectedUF || showAllMunicipalities;
   const simulationVisible = simulationActive && round === '1';
   const focusedCandidate = result?.candidates.find((candidate) => candidate.id === selectedCandidateId);
+  const candidateFocusReady = cityWinners
+    ? Boolean(municipalityIndexError) || (municipalityIndexRound === round && (municipalityProgress.loaded + municipalityProgress.failed >= MUNICIPALITY_PROGRESS_BATCH || !municipalityProgress.isLoading))
+    : !leadersLoading;
+  const handleCandidateSelection = useCallback((candidate: ElectionCandidate) => {
+    setSelectedCandidateId((current) => current === candidate.id ? null : candidate.id);
+    if (!window.matchMedia('(max-width: 790px)').matches) return;
+    window.requestAnimationFrame(() => {
+      const behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+      mapPanelRef.current?.scrollIntoView({ behavior, block: 'start' });
+    });
+  }, []);
   const selectedMunicipalityLeader = selectedMunicipality && resultStatus === 'ready' && !(round === '2' && roundTwoStarted && result?.countedSections === 0)
     ? result?.candidates[0] ?? null
     : null;
@@ -752,14 +767,14 @@ export default function App() {
       : round === '2' && roundTwoStarted && result?.countedSections === 0
         ? 'Aguardando totalização oficial'
         : selectedMunicipalityLeader
-          ? `${selectedMunicipalityLeader.ballotName} · ${formatInteger(selectedMunicipalityLeader.votes)} votos · ${formatPercent(selectedMunicipalityLeader.percent)}`
+          ? `${formatCandidateLabel(selectedMunicipalityLeader)} · ${formatInteger(selectedMunicipalityLeader.votes)} votos · ${formatPercent(selectedMunicipalityLeader.percent)}`
           : resultStatus === 'loading'
             ? 'Consultando resultado oficial do TSE…'
             : resultStatus === 'error'
               ? 'Consulta ao TSE indisponível'
               : 'Sem votos apurados publicados';
   const mapDescription = focusedCandidate
-    ? `Foco automático em ${focusedCandidate.ballotName}. As UFs e cidades onde lidera ficam destacadas; selecione novamente para limpar o foco.`
+    ? `Foco automático em ${formatCandidateLabel(focusedCandidate)}. As UFs e cidades onde lidera ficam destacadas; selecione novamente para limpar o foco.`
     : simulationVisible
     ? municipalityProgress.isLoading
       ? `SIMULAÇÃO — resultados oficiais do 1º turno chegando em lotes; ${formatInteger(municipalityProgress.completed)} de ${formatInteger(municipalityList.length || mapData?.features.length || 5571)} municípios carregados. Nenhum voto é inventado.`
@@ -785,8 +800,11 @@ export default function App() {
               : 'Aguardando resultados municipais'
           : 'Vencedores por UF';
   const marginLegendCandidates: Array<{ id: string; label: string; color: string }> = officeCode === '1'
-    ? PRESIDENT_MARGIN_LEGEND
-    : legendCandidates.slice(0, 2).map(({ candidate }) => ({ id: candidate.id, label: candidate.ballotName, color: getCandidateColor(candidate) }));
+    ? PRESIDENT_MARGIN_LEGEND.map((entry) => {
+      const candidate = result?.candidates.find((item) => getCandidateColor(item).toUpperCase() === entry.color);
+      return { ...entry, id: candidate?.id ?? entry.id, label: candidate ? formatCandidateLabel(candidate) : entry.label };
+    })
+    : legendCandidates.slice(0, 2).map(({ candidate }) => ({ id: candidate.id, label: formatCandidateLabel(candidate), color: getCandidateColor(candidate) }));
   const realtimeActive = isOfficialRealtime ? liveUpdates : simulationVisible;
   const realtimeDisabled = round === '2' && !roundTwoStarted;
   const realtimeLabel = isOfficialRealtime
@@ -878,7 +896,7 @@ export default function App() {
         </section>
 
         <section className={`workspace${mapFullscreen ? ' workspace--fullscreen' : ''}`} aria-label="Mapa e apuração eleitoral">
-          <div className="map-panel">
+          <div className="map-panel" ref={mapPanelRef}>
             <div className="map-panel-heading">
               <div><div className="map-title-line"><MapPin size={16} /><h2>{regionLabel}</h2>{selectedUF && <span className="unit-chip">{selectedUF}</span>}</div><p>{mapDescription}</p></div>
               <div className="map-control">
@@ -910,18 +928,21 @@ export default function App() {
               </div>
             </div>
             <div className={`map-stage${mapStatus === 'loading' ? ' map-stage--loading' : ''}`}>
-              {mapData && mapStatus === 'ready' ? (
+              {mapData && (mapStatus === 'ready' || mapStatus === 'loading') ? (
+                <>
                 <BrazilMap
                   data={mapData}
-                  level={cityWinners ? 'municipality' : 'state'}
+                  level={mapDataScope.selectedUF || mapDataScope.showAllMunicipalities ? 'municipality' : 'state'}
                   getKey={getFeatureKey}
                   getLabel={getFeatureLabel}
-                  voteShares={cityWinners ? municipalVoteShares : leaders}
+                  voteShares={mapDataScope.selectedUF || mapDataScope.showAllMunicipalities ? municipalVoteShares : leaders}
                   unitBoundaries={unitBoundaries}
-                  selectedUF={selectedUF}
+                  selectedUF={mapDataScope.selectedUF}
                   selectedCandidateId={selectedCandidateId}
-                  candidateFocusReady={selectedUF ? municipalityIndexRound === round && (municipalityProgress.completed > 0 || !municipalityProgress.isLoading) : !leadersLoading}
-                  selectedKey={selectedUF && selectedMunicipality ? selectedMunicipality.ibgeCode : undefined}
+                  selectedCandidate={focusedCandidate}
+                  candidateFocusReady={candidateFocusReady}
+                  suspended={mapStatus === 'loading'}
+                  selectedKey={mapDataScope.selectedUF && selectedMunicipality?.uf === mapDataScope.selectedUF ? selectedMunicipality.ibgeCode : undefined}
                   onSelect={handleMapSelect}
                   onSelectUF={(uf) => {
                     territoryRequestRef.current += 1;
@@ -934,6 +955,10 @@ export default function App() {
                     setShowAllMunicipalities(false);
                   }}
                 />
+                <div className={`map-loading-overlay${mapStatus === 'loading' ? ' is-active' : ''}`} role="status" aria-live="polite" aria-hidden={mapStatus !== 'loading'}>
+                  {mapStatus === 'loading' && <><LoaderCircle size={16} className="spin" /><span>Atualizando malha para {regionLabel}…</span></>}
+                </div>
+                </>
               ) : <div className="map-placeholder">{mapStatus === 'loading' ? <><LoaderCircle size={24} className="spin" /><span>Carregando malha oficial do IBGE…</span></> : <><Info size={20} /><span>{mapMessage || 'Não foi possível carregar o mapa.'}</span></>}</div>}
               {selectedUF && selectedMunicipality && <div className="map-selection"><span className="selection-pin"><MapPin size={14} /></span><div aria-live="polite"><strong>{selectedMunicipality.name}</strong><span>{selectedMunicipality.uf} · {selectedMunicipality.tseCode ? `código TSE ${selectedMunicipality.tseCode}` : 'identificando localidade oficial…'}</span><span className="map-selection-result" style={selectedMunicipalityLeader ? { color: getCandidateColor(selectedMunicipalityLeader) } : undefined} title={municipalitySelectionSummary}>{municipalitySelectionSummary}</span></div></div>}
             </div>
@@ -962,7 +987,7 @@ export default function App() {
                   <>
                     <span className="legend-label">{showAllMunicipalities || selectedUF ? 'CANDIDATOS' : 'VENCEDORES'}</span>
                     <div className="map-legend-items">
-                      {legendCandidates.map(({ candidate }) => <span className="map-legend-item" key={candidate.id} title={candidate.ballotName}><i style={{ backgroundColor: getCandidateColor(candidate) }} />{candidate.ballotName}</span>)}
+                      {legendCandidates.map(({ candidate }) => <span className="map-legend-item" key={candidate.id} title={formatCandidateLabel(candidate)}><i style={{ backgroundColor: getCandidateColor(candidate) }} />{formatCandidateLabel(candidate)}</span>)}
                     </div>
                   </>
                 ) : (
@@ -1014,7 +1039,7 @@ export default function App() {
               leaders={summaryLeaders}
               leadersLoading={leadersLoading}
               selectedCandidateId={selectedCandidateId}
-              onSelectCandidate={(candidate) => setSelectedCandidateId((current) => current === candidate.id ? null : candidate.id)}
+              onSelectCandidate={handleCandidateSelection}
               onBack={goBack}
               onRefresh={refresh}
               refreshing={refreshing || resultStatus === 'loading'}

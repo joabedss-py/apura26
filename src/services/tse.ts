@@ -164,7 +164,7 @@ function collectCandidates(cargo: RawCargo): ElectionCandidate[] {
     }
     if (!value || typeof value !== 'object') return;
     const node = value as RawObject;
-    const party = String(node.sg ?? node.com ?? node.nm ?? inheritedParty);
+    const party = String(node.sg ?? node.com ?? inheritedParty);
     if ('vap' in node && ('pvap' in node || 'pvapn' in node)) {
       const id = String(node.sqcand ?? `${node.n ?? ''}-${node.nmu ?? node.nm ?? ''}`);
       found.set(id, {

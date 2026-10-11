@@ -1,5 +1,6 @@
 import type { ElectionCandidate } from '../types';
 import { getCandidateColor } from './colors';
+import { formatCandidateLabel } from './candidate-identity';
 
 type Rgb = [number, number, number];
 type Oklab = [number, number, number];
@@ -133,10 +134,10 @@ export function mixCandidateColors(candidates: ElectionCandidate[]): string | nu
 export function describeVoteMix(candidates: ElectionCandidate[]): string {
   const [leader, runnerUp] = rankedVotes(candidates);
   if (!leader) return '';
-  if (!runnerUp) return `Cor oficial de ${leader.ballotName}`;
+  if (!runnerUp) return `Cor oficial de ${formatCandidateLabel(leader)}`;
 
   const margin = marginInPoints(leader, runnerUp);
-  if (margin === null) return `Cor oficial de ${leader.ballotName}; diferença para o segundo colocado indisponível`;
+  if (margin === null) return `Cor oficial de ${formatCandidateLabel(leader)}; diferença para o segundo colocado indisponível`;
   const formattedMargin = margin.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-  return `${leader.ballotName}; diferença de ${formattedMargin} p.p. (${marginBandLabel(marginBandFor(margin))})`;
+  return `${formatCandidateLabel(leader)}; diferença de ${formattedMargin} p.p. (${marginBandLabel(marginBandFor(margin))})`;
 }
