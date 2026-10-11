@@ -6,6 +6,7 @@ import { getIbgeAreaCode } from '../services/ibge';
 import { getCandidateColor } from '../services/colors';
 import { candidateMatchesSelection, formatCandidateLabel } from '../services/candidate-identity';
 import { describeVoteMix, mixCandidateColors } from '../services/vote-color';
+import CandidatePortrait from './CandidatePortrait';
 
 interface BrazilMapProps {
   data: FeatureCollection;
@@ -15,6 +16,7 @@ interface BrazilMapProps {
   voteShares?: Map<string, ElectionCandidate[]>;
   unitBoundaries?: FeatureCollection | null;
   selectedUF?: string | null;
+  candidatePhotoRegion?: string | null;
   selectedCandidateId?: string | null;
   selectedCandidate?: ElectionCandidate | null;
   candidateFocusReady?: boolean;
@@ -59,6 +61,16 @@ interface ProjectedUnit {
   centerX: number;
   centerY: number;
   bounds: MapBounds;
+}
+
+interface MunicipalityHoverCardState {
+  key: string;
+  municipality: string;
+  uf: string;
+  photoRegion: string;
+  candidates: ElectionCandidate[];
+  x: number;
+  y: number;
 }
 
 const WIDTH = 860;
@@ -146,11 +158,11 @@ function mergeBounds(bounds: MapBounds[]): MapBounds | null {
   }), { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
 }
 
-function viewForBounds(bounds: MapBounds, minimumScale = 1.25): ViewTransform {
+function viewForBounds(bounds: MapBounds, minimumScale = 1.25, maximumScale = MAX_ZOOM): ViewTransform {
   const width = Math.max(bounds.maxX - bounds.minX, 1);
   const height = Math.max(bounds.maxY - bounds.minY, 1);
   const fitted = Math.min((WIDTH - 64) / width, (HEIGHT - 64) / height);
-  const scale = Math.min(MAX_ZOOM, Math.max(minimumScale, fitted * 0.82));
+  const scale = Math.min(maximumScale, Math.max(minimumScale, fitted * 0.82));
   return {
     scale,
     tx: WIDTH / 2 - ((bounds.minX + bounds.maxX) / 2) * scale,
@@ -199,6 +211,33 @@ function syncUnitLabelScale(group: SVGGElement | null, scale: number): void {
   });
 }
 
+function MunicipalityHoverCard({ card }: { card: MunicipalityHoverCardState }) {
+  return (
+    <div className="map-hover-card" role="tooltip" style={{ left: card.x, top: card.y }}>
+      <div className="map-hover-heading"><span>{card.uf}</span><i aria-hidden="true" /><strong>{card.municipality}</strong></div>
+      <div className="map-hover-candidates">
+        {card.candidates.map((candidate) => {
+          const elected = /\beleit[oa]\b/i.test(candidate.status);
+          return (
+            <div className="map-hover-candidate" key={`${card.key}-${candidate.id}`}>
+              <CandidatePortrait candidate={candidate} region={card.photoRegion} className="candidate-photo--map" />
+              <span className="map-hover-candidate-info">
+                <span className="map-hover-candidate-name">{candidate.ballotName || candidate.name}</span>
+                <span className="map-hover-candidate-meta">
+                  {candidate.number && <span className="map-hover-number">{candidate.number}</span>}
+                  {candidate.party.trim() && <span className="map-hover-party">{candidate.party.trim().toLocaleUpperCase('pt-BR')}</span>}
+                  {elected && <span className="map-hover-elected">Eleito</span>}
+                </span>
+              </span>
+              <span className="map-hover-result"><strong>{candidate.percent.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%</strong><small>{voteFormatter.format(candidate.votes)} votos</small></span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 const MapFeature = memo(function MapFeature({
   feature,
   level,
@@ -208,6 +247,7 @@ const MapFeature = memo(function MapFeature({
   selectedCandidate,
   disabled,
   onSelect,
+  onHover,
 }: {
   feature: ProjectedFeature;
   level: 'state' | 'municipality';
@@ -217,6 +257,7 @@ const MapFeature = memo(function MapFeature({
   selectedCandidate?: ElectionCandidate | null;
   disabled: boolean;
   onSelect: (feature: GeoFeature) => void;
+  onHover: (feature: ProjectedFeature | null, shares: ElectionCandidate[], clientX?: number, clientY?: number) => void;
 }) {
   const leader = shares?.[0];
   const isCandidateLeader = candidateMatchesSelection(leader, selectedCandidate, selectedCandidateId);
@@ -239,8 +280,8 @@ const MapFeature = memo(function MapFeature({
         className={`map-feature${selected ? ' is-selected' : ''}${isCandidateLeader ? ' is-candidate-leader' : ''}${isDimmed ? ' is-dimmed' : ''}`}
         fill={fill}
         fillOpacity={fillOpacity}
-        stroke={selected ? '#9fffc7' : isCandidateLeader ? '#e1fff0' : level === 'municipality' ? '#07110d' : '#8aa79b'}
-        strokeWidth={selected ? 2.35 : isCandidateLeader ? 1.6 : level === 'state' ? 1.15 : 1.05}
+        stroke={selected ? 'rgba(220, 238, 226, .74)' : isCandidateLeader ? 'rgba(255, 255, 255, .34)' : level === 'municipality' ? '#07110d' : '#8aa79b'}
+        strokeWidth={selected ? 1.15 : isCandidateLeader ? 1.05 : level === 'state' ? 1.15 : 1.05}
         vectorEffect="non-scaling-stroke"
         tabIndex={disabled ? -1 : 0}
         role="button"
@@ -248,6 +289,12 @@ const MapFeature = memo(function MapFeature({
         aria-disabled={disabled}
         aria-label={label}
         onClick={disabled ? undefined : () => onSelect(feature.source)}
+        onPointerEnter={(event) => {
+          if (!disabled && level === 'municipality' && event.pointerType !== 'touch') {
+            onHover(feature, shares ?? [], event.clientX, event.clientY);
+          }
+        }}
+        onPointerLeave={() => onHover(null, [])}
         onKeyDown={(event) => {
           if (disabled) return;
           if (event.key === 'Enter' || event.key === ' ') {
@@ -255,9 +302,7 @@ const MapFeature = memo(function MapFeature({
             onSelect(feature.source);
           }
         }}
-      >
-        <title>{leader ? `${feature.label} · ${level === 'state' ? `Mais votado: ${formatCandidateLabel(leader)}, ${leaderPercent}%, ${voteFormatter.format(leader.votes)} votos` : `${formatCandidateLabel(leader)} · diferença para o segundo colocado: ${distribution} · ${leaderPercent}%, ${voteFormatter.format(leader.votes)} votos`}` : feature.label}</title>
-      </path>
+      />
       {level === 'state' && (
         <text x={feature.centerX} y={feature.centerY} className="map-unit-label" textAnchor="middle" dominantBaseline="central" aria-hidden="true">
           {feature.key.toUpperCase()}
@@ -267,7 +312,7 @@ const MapFeature = memo(function MapFeature({
   );
 });
 
-export default function BrazilMap({ data, level, getKey, getLabel, voteShares, unitBoundaries, selectedUF, selectedCandidateId, selectedCandidate, candidateFocusReady = true, suspended = false, selectedKey, onSelect, onSelectUF }: BrazilMapProps) {
+export default function BrazilMap({ data, level, getKey, getLabel, voteShares, unitBoundaries, selectedUF, candidatePhotoRegion, selectedCandidateId, selectedCandidate, candidateFocusReady = true, suspended = false, selectedKey, onSelect, onSelectUF }: BrazilMapProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const viewGroupRef = useRef<SVGGElement | null>(null);
   const viewAnimationRef = useRef<number | null>(null);
@@ -280,6 +325,7 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
   const suppressClickRef = useRef(false);
   const gestureMovedRef = useRef(false);
   const [, setViewRevision] = useState(0);
+  const [hoverCard, setHoverCard] = useState<MunicipalityHoverCardState | null>(null);
   const viewRef = useRef<ViewTransform>({ scale: 1, tx: 0, ty: 0 });
   const autoFocusScopeRef = useRef<string | null>(null);
 
@@ -290,6 +336,29 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
     if (zoomInButtonRef.current) zoomInButtonRef.current.disabled = view.scale >= MAX_ZOOM;
     if (zoomOutButtonRef.current) zoomOutButtonRef.current.disabled = view.scale <= MIN_ZOOM;
   }, []);
+
+  const handleFeatureHover = useCallback((feature: ProjectedFeature | null, shares: ElectionCandidate[], clientX?: number, clientY?: number) => {
+    if (!feature || level !== 'municipality' || !shares.length || clientX === undefined || clientY === undefined) {
+      setHoverCard(null);
+      return;
+    }
+    const bounds = svgRef.current?.parentElement?.getBoundingClientRect();
+    if (!bounds) return;
+    const unit = selectedUF ? findUnitByCode(selectedUF) : unitFromFeature(feature.source);
+    const cardWidth = 294;
+    const cardHeight = shares.length > 1 ? 154 : 108;
+    setHoverCard({
+      key: feature.key,
+      municipality: feature.label,
+      uf: unit?.uf ?? selectedUF ?? '',
+      photoRegion: candidatePhotoRegion ?? selectedUF ?? unit?.uf ?? 'BR',
+      candidates: shares.slice(0, 2),
+      x: Math.max(8, Math.min(bounds.width - cardWidth - 8, clientX - bounds.left + 16)),
+      y: Math.max(8, Math.min(bounds.height - cardHeight - 8, clientY - bounds.top + 16)),
+    });
+  }, [candidatePhotoRegion, level, selectedUF]);
+
+  useEffect(() => setHoverCard(null), [data, level, selectedUF]);
 
   const projection = useMemo(() => buildProjection(level === 'municipality' && selectedUF && unitBoundaries ? unitBoundaries.features : data.features), [data, level, selectedUF, unitBoundaries]);
   const features = useMemo<ProjectedFeature[]>(() => data.features.map((feature) => {
@@ -336,7 +405,7 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
       return;
     }
     const startedAt = performance.now();
-    const duration = 620;
+    const duration = 720;
     const animate = (time: number) => {
       const progress = Math.min(1, (time - startedAt) / duration);
       const eased = 1 - (1 - progress) ** 3;
@@ -383,14 +452,16 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
       if (selectedKey) {
         const selectedFeature = features.find((feature) => feature.key === selectedKey);
         if (selectedFeature) {
-          updateView(viewForBounds(selectedFeature.bounds, 3.2));
+          const currentScale = viewRef.current.scale;
+          const gentleMunicipalityScale = currentScale > 3.2 ? currentScale : Math.min(3.2, Math.max(1.6, currentScale * 1.25));
+          updateView(viewForBounds(selectedFeature.bounds, 1.2, level === 'municipality' ? gentleMunicipalityScale : MAX_ZOOM));
           return;
         }
       }
       if (selectedUF) {
         const selectedUnit = projectedUnits.find((unit) => unit.uf === selectedUF);
         if (selectedUnit) {
-          updateView(viewForBounds(selectedUnit.bounds, 2.4));
+          updateView(viewForBounds(selectedUnit.bounds, 1.6, 2.4));
           return;
         }
       }
@@ -585,6 +656,7 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
               selectedCandidate={selectedCandidate}
               disabled={suspended}
               onSelect={onSelect}
+              onHover={handleFeatureHover}
             />
           ))}
           {projectedUnits.map((unit) => {
@@ -625,6 +697,7 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
           })}
         </g>
       </svg>
+      {hoverCard && !suspended && <MunicipalityHoverCard card={hoverCard} />}
       <div className="map-zoom-controls" role="group" aria-label="Controles de zoom do mapa">
         <button ref={zoomInButtonRef} type="button" aria-label="Aproximar mapa" title="Aproximar" onClick={() => zoomAtCenter(1.35)} disabled={renderedView.scale >= MAX_ZOOM}><Plus size={17} /></button>
         <span ref={zoomLevelRef} className="map-zoom-level" aria-live="off">{Math.round(renderedView.scale * 100)}%</span>

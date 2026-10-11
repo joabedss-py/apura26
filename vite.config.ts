@@ -7,6 +7,13 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 3000,
     strictPort: true,
+    proxy: {
+      '/api/candidate-photos': {
+        target: 'https://cdn.tse.jus.br',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/candidate-photos/, '/estatistica/sead/eleicoes/eleicoes2026/fotos'),
+      },
+    },
   },
   preview: {
     host: '0.0.0.0',

@@ -12,6 +12,11 @@ Verificadas em 10 de outubro de 2026.
 - Exemplo oficial estadual (Governador, eleição 6259): https://resultados.tse.jus.br/oficial/ele2026/6259/dados/sp/sp-c0003-e006259-u.jws
 - Configuração do TSE com o vínculo entre código IBGE `cdi` e código eleitoral `cd`: https://resultados.tse.jus.br/oficial/ele2026/6257/config/mun-e006257-cm.jws
 
+## Fotos de candidaturas
+
+- Conjunto oficial de candidaturas 2026, com arquivos de fotos separados por UF e pelo Brasil: https://dadosabertos.tse.jus.br/dataset/candidatos-2026
+- As imagens estão nos arquivos `foto_cand2026_{UF}_div.zip` publicados pelo CDN oficial do TSE. A aplicação obtém sob demanda a foto pelo código único `SQ_CANDIDATO` (`sqcand` nos resultados assinados), extrai apenas a imagem necessária e mantém as iniciais como alternativa quando o cadastro não contém retrato. No Preview atual, a solicitação usa um proxy same-origin do Vite para evitar bloqueio CORS; uma publicação estática exigirá preservar esse proxy em uma rota de servidor ou servir as fotos como assets do projeto.
+
 ## Segundo turno e atualização
 
 - Instruções técnicas do TSE para divulgação dos resultados 2026 (códigos de eleição, formato, consulta e limites): https://www.tse.jus.br/eleicoes/informacoes-tecnicas-sobre-a-divulgacao-de-resultados

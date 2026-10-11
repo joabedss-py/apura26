@@ -10,7 +10,7 @@ function normalizeIdentity(value: string): string {
 
 export function formatCandidateSuffix(candidate: CandidateNumberParty): string {
   const number = candidate.number.trim();
-  const party = candidate.party.trim();
+  const party = candidate.party.trim().toLocaleUpperCase('pt-BR');
   return [number ? `- ${number}` : '', party ? `(${party})` : ''].filter(Boolean).join(' ');
 }
 

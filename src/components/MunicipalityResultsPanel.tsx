@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, LoaderCircle, Search, ShieldCheck } from 'lu
 import type { ElectionRound, MunicipalityOverviewRow, MunicipalityRef } from '../types';
 import { getCandidateColor } from '../services/colors';
 import { formatCandidateSuffix } from '../services/candidate-identity';
+import ElectionScopeControls from './ElectionScopeControls';
 
 const PAGE_SIZE = 40;
 
@@ -28,8 +29,12 @@ interface MunicipalityResultsPanelProps {
   indexLoading: boolean;
   indexError: string;
   expectedTotal: number;
+  officeCode: string;
   round: ElectionRound;
   roundTwoStarted: boolean;
+  canUseSecondRound: boolean;
+  onOfficeChange: (officeCode: string) => void;
+  onRoundChange: (round: ElectionRound) => void;
   onSelect: (municipality: MunicipalityRef) => void;
 }
 
@@ -43,8 +48,12 @@ export default function MunicipalityResultsPanel({
   indexLoading,
   indexError,
   expectedTotal,
+  officeCode,
   round,
   roundTwoStarted,
+  canUseSecondRound,
+  onOfficeChange,
+  onRoundChange,
   onSelect,
 }: MunicipalityResultsPanelProps) {
   const [query, setQuery] = useState('');
@@ -68,6 +77,15 @@ export default function MunicipalityResultsPanel({
           {isLoading ? <LoaderCircle size={13} className="spin" /> : <ShieldCheck size={13} />}{formatInteger(completed)} / {formatInteger(expectedTotal || rows.length)}
         </span>
       </div>
+      <ElectionScopeControls
+        officeCode={officeCode}
+        round={round}
+        roundTwoStarted={roundTwoStarted}
+        canUseSecondRound={canUseSecondRound}
+        simulationActive={simulationActive}
+        onOfficeChange={onOfficeChange}
+        onRoundChange={onRoundChange}
+      />
       <p className="city-results-note">
         {simulationActive
           ? 'SIMULAÇÃO DE CARREGAMENTO — resultados oficiais já publicados do 1º turno são consultados em lotes; nenhum voto é inventado e a sequência não é ao vivo.'
