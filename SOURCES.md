@@ -15,7 +15,7 @@ Verificadas em 10 de outubro de 2026.
 ## Fotos de candidaturas
 
 - Conjunto oficial de candidaturas 2026, com arquivos de fotos separados por UF e pelo Brasil: https://dadosabertos.tse.jus.br/dataset/candidatos-2026
-- As imagens estão nos arquivos `foto_cand2026_{UF}_div.zip` publicados pelo CDN oficial do TSE. A aplicação obtém sob demanda a foto pelo código único `SQ_CANDIDATO` (`sqcand` nos resultados assinados), extrai apenas a imagem necessária e mantém as iniciais como alternativa quando o cadastro não contém retrato. No Preview atual, a solicitação usa um proxy same-origin do Vite para evitar bloqueio CORS; uma publicação estática exigirá preservar esse proxy em uma rota de servidor ou servir as fotos como assets do projeto.
+- As imagens estão nos arquivos `foto_cand2026_{UF}_div.zip` publicados pelo CDN oficial do TSE. A aplicação obtém sob demanda a foto pelo código único `SQ_CANDIDATO` (`sqcand` nos resultados assinados), extrai apenas a imagem necessária e mantém as iniciais como alternativa quando o cadastro não contém retrato. O Preview usa um proxy same-origin do Vite; para publicação, `server.mjs` encaminha a solicitação por uma rota híbrida `/api/candidate-photos/*`, evitando CORS sem incluir os arquivos de fotos no repositório. A rota e o container estão configurados, mas ainda não foram publicados.
 
 ## Segundo turno e atualização
 
