@@ -878,7 +878,7 @@ export default function App() {
           <div className="hero-copy">
             <p className="eyebrow"><span className="eyebrow-line" /> ELEIÇÕES GERAIS · {round === '1' ? 'PRIMEIRO' : 'SEGUNDO'} TURNO</p>
             <h1>A eleição,<br /><em>território por território.</em></h1>
-            <p className="hero-description">Explore os resultados oficiais de 2026 do Brasil à sua cidade — agora com navegação livre pelo mapa.</p>
+            <p className="hero-description">Explore os resultados oficiais de 2026 do Brasil por cada cidade.</p>
           </div>
           <div className="hero-status">
             <div className="hero-status-kicker"><Activity size={14} /> CENTRAL DE APURAÇÃO</div>
