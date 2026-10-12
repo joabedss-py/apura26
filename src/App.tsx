@@ -686,7 +686,6 @@ export default function App() {
       if (unit) {
         setSimulationActive(false);
         setSelectedCandidateId(null);
-        setOfficeCode('1');
         setSelectedUF(unit.uf);
         setSelectedMunicipality(null);
         setShowAllMunicipalities(false);
@@ -921,7 +920,6 @@ export default function App() {
                     territoryRequestRef.current += 1;
                     setSimulationActive(false);
                     setSelectedCandidateId(null);
-                    setOfficeCode('1');
                     clearCurrentResult();
                     setSelectedUF(uf);
                     setSelectedMunicipality(null);
@@ -962,7 +960,6 @@ export default function App() {
                     territoryRequestRef.current += 1;
                     setSimulationActive(false);
                     setSelectedCandidateId(null);
-                    setOfficeCode('1');
                     clearCurrentResult();
                     setSelectedUF(uf);
                     setSelectedMunicipality(null);

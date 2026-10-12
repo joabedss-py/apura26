@@ -78,6 +78,7 @@ const HEIGHT = 560;
 const voteFormatter = new Intl.NumberFormat('pt-BR');
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 32;
+const STATE_FOCUS_MAX_SCALE = 3.24;
 const UF_LABEL_OFFSETS: Record<string, readonly [number, number]> = {
   AL: [10, -2], AP: [6, 0], DF: [0, 9], ES: [7, 2], PB: [9, -4], PE: [9, 0], RJ: [7, 5], RN: [7, -5], SE: [8, 4],
 };
@@ -461,7 +462,7 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
       if (selectedUF) {
         const selectedUnit = projectedUnits.find((unit) => unit.uf === selectedUF);
         if (selectedUnit) {
-          updateView(viewForBounds(selectedUnit.bounds, 1.6, 2.4));
+          updateView(viewForBounds(selectedUnit.bounds, 1.6, STATE_FOCUS_MAX_SCALE));
           return;
         }
       }
