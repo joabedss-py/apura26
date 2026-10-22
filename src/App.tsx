@@ -4,7 +4,7 @@ import BrazilMap from './components/BrazilMap';
 import MunicipalityResultsPanel from './components/MunicipalityResultsPanel';
 import ElectionScopeControls from './components/ElectionScopeControls';
 import CandidatePortrait from './components/CandidatePortrait';
-import { FEDERAL_UNITS, GOVERNOR_RUNOFF_UFS, OFFICE_OPTIONS, findUnitByCode } from './data/states';
+import { FEDERAL_UNITS, GOVERNOR_RUNOFF_UFS, OFFICE_OPTIONS } from './data/states';
 import { getAllMunicipalitiesMap, getFederalUnitsMap, getIbgeAreaCode, getMunicipalitiesMap } from './services/ibge';
 import { getCandidateColor } from './services/colors';
 import { formatCandidateLabel, formatCandidateSuffix } from './services/candidate-identity';
@@ -14,7 +14,6 @@ import type { ElectionCandidate, ElectionResult, ElectionRound, FeatureCollectio
 
 const TSE_RESULTS_URL = 'https://resultados.tse.jus.br/oficial/app/index.html';
 const TSE_OPEN_DATA_URL = 'https://dadosabertos.tse.jus.br/dataset/resultados-2026';
-const UF_BY_IBGE = new Map(FEDERAL_UNITS.map((unit) => [unit.ibgeCode, unit]));
 const ROUND_TWO_START = Date.parse('2026-10-25T20:00:00Z');
 const ROUND_TWO_LOCAL_POLL_MS = 30_000;
 const ROUND_TWO_CITIES_POLL_MS = 180_000;
@@ -40,14 +39,6 @@ function formatPercent(value?: number | null): string {
 
 function isGovernorRunoff(uf?: string | null): boolean {
   return Boolean(uf && GOVERNOR_RUNOFF_UFS.includes(uf as (typeof GOVERNOR_RUNOFF_UFS)[number]));
-}
-
-function unitFromFeature(feature: GeoFeature) {
-  const properties = feature.properties;
-  const directUf = properties.sigla ?? properties.SIGLA_UF ?? properties.uf ?? properties.UF;
-  if (directUf) return findUnitByCode(directUf);
-  const code = getIbgeAreaCode(feature);
-  return UF_BY_IBGE.get(code.padStart(2, '0').slice(0, 2)) ?? findUnitByCode(code);
 }
 
 function StatusPill({ status, text }: { status: 'ok' | 'loading' | 'warning'; text: string }) {
@@ -297,7 +288,7 @@ export default function App() {
   const [selectedMunicipality, setSelectedMunicipality] = useState<MunicipalityRef | null>(null);
   const [showAllMunicipalities, setShowAllMunicipalities] = useState(false);
   const [mapData, setMapData] = useState<FeatureCollection | null>(null);
-  const [mapDataScope, setMapDataScope] = useState<{ selectedUF: string | null; showAllMunicipalities: boolean }>({ selectedUF: null, showAllMunicipalities: false });
+  const [mapDataScope, setMapDataScope] = useState<{ selectedUF: string | null }>({ selectedUF: null });
   const [mapStatus, setMapStatus] = useState<LoadState>('loading');
   const [mapMessage, setMapMessage] = useState('');
   const [unitBoundaries, setUnitBoundaries] = useState<FeatureCollection | null>(null);
@@ -351,7 +342,7 @@ export default function App() {
   const currentUnit = selectedUF ? FEDERAL_UNITS.find((unit) => unit.uf === selectedUF) : undefined;
   const municipalityByIbge = useMemo(() => municipalityIndex ?? new Map<string, MunicipalityRef>(), [municipalityIndex]);
   const canUseSecondRound = officeCode === '1' || officeCode === '3';
-  const needsMunicipalityData = Boolean(selectedUF) || showAllMunicipalities;
+  const needsMunicipalityData = true;
 
   const clearCurrentResult = useCallback(() => {
     setResult(null);
@@ -382,15 +373,11 @@ export default function App() {
     let active = true;
     setMapStatus('loading');
     setMapMessage('');
-    const request = selectedUF
-      ? getMunicipalitiesMap(selectedUF)
-      : showAllMunicipalities
-        ? getAllMunicipalitiesMap()
-        : getFederalUnitsMap();
+    const request = selectedUF ? getMunicipalitiesMap(selectedUF) : getAllMunicipalitiesMap();
     request.then((data) => {
       if (active) {
         setMapData(data);
-        setMapDataScope({ selectedUF, showAllMunicipalities });
+        setMapDataScope({ selectedUF });
         setMapStatus(data.features.length ? 'ready' : 'empty');
       }
     }).catch((error: unknown) => {
@@ -400,7 +387,7 @@ export default function App() {
       }
     });
     return () => { active = false; };
-  }, [selectedUF, showAllMunicipalities]);
+  }, [selectedUF]);
 
   useEffect(() => {
     let active = true;
@@ -548,9 +535,10 @@ export default function App() {
       .filter((municipality) => !selectedUF || municipality.uf === selectedUF)
       .sort((a, b) => a.uf.localeCompare(b.uf) || a.name.localeCompare(b.name, 'pt-BR'));
   }, [municipalityByIbge, selectedUF]);
+  const municipalityScopeTotal = selectedUF ? municipalityList.length : municipalityIndex?.size ?? mapData?.features.length ?? 5571;
 
   useEffect(() => {
-    const needsMunicipalities = showAllMunicipalities || Boolean(selectedUF);
+    const needsMunicipalities = needsMunicipalityData;
     if (!needsMunicipalities || !municipalityIndex || municipalityIndexRound !== round) {
       if (!needsMunicipalities) {
         setMunicipalityResults(new Map());
@@ -634,7 +622,7 @@ export default function App() {
       }
     });
     return () => { active = false; };
-  }, [showAllMunicipalities, municipalityIndex, municipalityIndexRound, selectedUF, officeCode, round, roundTwoStarted, municipalityRefreshKey]);
+  }, [needsMunicipalityData, municipalityIndex, municipalityIndexRound, selectedUF, officeCode, round, roundTwoStarted, municipalityRefreshKey]);
 
   useEffect(() => {
     if (round !== '2' || !roundTwoStarted || !liveUpdates) return;
@@ -647,14 +635,13 @@ export default function App() {
 
   useEffect(() => {
     if (round !== '2' || !roundTwoStarted || !liveUpdates) return;
-    if (!showAllMunicipalities && !selectedUF) return;
     if (municipalityProgress.isLoading) return;
     const timer = window.setInterval(() => {
       if (document.visibilityState !== 'visible') return;
       setMunicipalityRefreshKey((value) => value + 1);
     }, ROUND_TWO_CITIES_POLL_MS);
     return () => window.clearInterval(timer);
-  }, [round, roundTwoStarted, showAllMunicipalities, selectedUF, municipalityProgress.isLoading, liveUpdates]);
+  }, [round, roundTwoStarted, selectedUF, municipalityProgress.isLoading, liveUpdates]);
 
   const municipalVoteShares = useMemo(() => {
     const resultMap = new Map<string, ElectionCandidate[]>();
@@ -668,31 +655,14 @@ export default function App() {
 
   const summaryLeaders = useMemo(() => new Map([...leaders].map(([uf, candidates]) => [uf, candidates[0]]).filter((entry): entry is [string, ElectionCandidate] => Boolean(entry[1]))), [leaders]);
 
-  const getFeatureKey = useCallback((feature: GeoFeature) => {
-    if (!mapDataScope.selectedUF && !mapDataScope.showAllMunicipalities) return unitFromFeature(feature)?.uf ?? getIbgeAreaCode(feature);
-    return getIbgeAreaCode(feature).padStart(7, '0');
-  }, [mapDataScope]);
+  const getFeatureKey = useCallback((feature: GeoFeature) => getIbgeAreaCode(feature).padStart(7, '0'), []);
 
   const getFeatureLabel = useCallback((feature: GeoFeature) => {
-    if (!mapDataScope.selectedUF && !mapDataScope.showAllMunicipalities) return unitFromFeature(feature)?.name ?? 'Unidade da Federação';
     const code = getIbgeAreaCode(feature).padStart(7, '0');
     return municipalityByIbge.get(code)?.name ?? String(feature.properties.nome ?? feature.properties.nm ?? `Município ${code}`);
-  }, [mapDataScope, municipalityByIbge]);
+  }, [municipalityByIbge]);
 
   const handleMapSelect = useCallback(async (feature: GeoFeature) => {
-    if (!selectedUF && !showAllMunicipalities) {
-      territoryRequestRef.current += 1;
-      const unit = unitFromFeature(feature);
-      if (unit) {
-        setSimulationActive(false);
-        setSelectedCandidateId(null);
-        setSelectedUF(unit.uf);
-        setSelectedMunicipality(null);
-        setShowAllMunicipalities(false);
-        clearCurrentResult();
-      }
-      return;
-    }
     const ibgeCode = getIbgeAreaCode(feature).padStart(7, '0');
     if (selectedMunicipality?.ibgeCode === ibgeCode) return;
     const requestId = ++territoryRequestRef.current;
@@ -736,7 +706,7 @@ export default function App() {
     if (round === '2' && !roundTwoStarted) return;
     setRefreshing(true);
     setRefreshKey((value) => value + 1);
-    if (showAllMunicipalities || selectedUF) setMunicipalityRefreshKey((value) => value + 1);
+    setMunicipalityRefreshKey((value) => value + 1);
   };
   const returnToCountry = () => {
     territoryRequestRef.current += 1;
@@ -759,12 +729,12 @@ export default function App() {
     if (selectedMunicipality) returnToState();
     else if (selectedUF) returnToCountry();
   };
-  const regionLabel = showAllMunicipalities && !selectedUF ? 'Brasil · municípios' : selectedMunicipality?.name ?? currentUnit?.name ?? 'Brasil';
+  const regionLabel = !selectedUF ? 'Brasil · municípios' : selectedMunicipality?.name ?? currentUnit?.name ?? 'Brasil';
 
   const legendCandidates = useMemo(() => {
-    const candidates: ElectionCandidate[] = showAllMunicipalities || selectedUF
-      ? [...municipalityResults.values()].filter((row) => row.candidate && row.status === 'ready' && row.candidate.votes > 0).map((row) => row.candidate as ElectionCandidate)
-      : [...summaryLeaders.values()];
+    const candidates: ElectionCandidate[] = [...municipalityResults.values()]
+      .filter((row) => row.candidate && row.status === 'ready' && row.candidate.votes > 0)
+      .map((row) => row.candidate as ElectionCandidate);
     const counts = new Map<string, { candidate: ElectionCandidate; count: number }>();
     candidates.forEach((candidate) => {
       const entry = counts.get(candidate.id);
@@ -772,7 +742,7 @@ export default function App() {
       else counts.set(candidate.id, { candidate, count: 1 });
     });
     return [...counts.values()].sort((a, b) => b.count - a.count).slice(0, 3);
-  }, [summaryLeaders, municipalityResults, selectedUF, showAllMunicipalities]);
+  }, [municipalityResults]);
 
   const showCityMode = () => {
     territoryRequestRef.current += 1;
@@ -781,7 +751,7 @@ export default function App() {
     setShowAllMunicipalities((value) => !value);
     setSelectedMunicipality(null);
   };
-  const cityWinners = selectedUF || showAllMunicipalities;
+  const cityWinners = true;
   const simulationVisible = simulationActive && round === '1';
   const focusedCandidate = result?.candidates.find((candidate) => candidate.id === selectedCandidateId);
   const candidateFocusReady = cityWinners
@@ -796,18 +766,24 @@ export default function App() {
     });
   }, []);
   const mapDescription = focusedCandidate
-    ? `Foco automático em ${formatCandidateLabel(focusedCandidate)}. As UFs e cidades onde lidera ficam destacadas; selecione novamente para limpar o foco.`
+    ? `Foco automático em ${formatCandidateLabel(focusedCandidate)}. As cidades onde lidera ficam destacadas; selecione novamente para limpar o foco.`
     : simulationVisible
     ? municipalityProgress.isLoading
       ? `SIMULAÇÃO — resultados oficiais do 1º turno chegando em lotes; ${formatInteger(municipalityProgress.completed)} de ${formatInteger(municipalityList.length || mapData?.features.length || 5571)} municípios carregados. Nenhum voto é inventado.`
       : 'SIMULAÇÃO — resultados oficiais já publicados do 1º turno; a ordem de carregamento é demonstrativa, não ao vivo.'
+    : round === '2' && !roundTwoStarted
+      ? 'A malha municipal está pronta. As cores do 2º turno aparecerão quando a apuração oficial começar em 25/10, às 17h.'
     : showAllMunicipalities
       ? 'A cor identifica o candidato vencedor em cada município; tons mais escuros indicam uma vantagem maior sobre o segundo colocado. Selecione uma cidade para abrir a votação nominal.'
       : selectedUF
         ? municipalityProgress.isLoading
           ? `Resultados municipais carregados progressivamente: ${formatInteger(municipalityProgress.completed)} de ${formatInteger(municipalityList.length)}.`
           : 'A cor identifica o candidato vencedor; tons mais escuros indicam maior vantagem sobre o segundo colocado. Selecione uma cidade para detalhar a votação nominal.'
-        : 'Cada UF recebe a cor do candidato mais votado. Selecione um estado para abrir o mapa municipal ou veja todas as cidades.';
+        : municipalityIndexError
+          ? 'O mosaico municipal está visível; a consulta do TSE será retomada quando o índice estiver disponível.'
+          : municipalityProgress.isLoading
+            ? `Mosaico municipal: resultados oficiais carregados progressivamente — ${formatInteger(municipalityProgress.completed)} de ${formatInteger(municipalityScopeTotal)} municípios.`
+            : 'Cada município recebe a cor do candidato vencedor nos resultados oficiais. Selecione uma cidade ou a sigla de uma UF para detalhar a apuração.';
   const mapLegendMessage = simulationVisible
     ? 'Simulação progressiva · dados oficiais do TSE'
     : round === '2' && !roundTwoStarted
@@ -820,7 +796,7 @@ export default function App() {
             : municipalityProgress.isLoading
               ? 'Carregando resultados municipais'
               : 'Aguardando resultados municipais'
-          : 'Vencedores por UF';
+          : 'Vencedores municipais';
   const marginLegendCandidates: Array<{ id: string; label: string; color: string }> = officeCode === '1'
     ? PRESIDENT_MARGIN_LEGEND.map((entry) => {
       const candidate = result?.candidates.find((item) => getCandidateColor(item).toUpperCase() === entry.color);
@@ -912,7 +888,7 @@ export default function App() {
             <div className="map-panel-heading">
               <div><div className="map-title-line"><MapPin size={16} /><h2>{regionLabel}</h2>{selectedUF && <span className="unit-chip">{selectedUF}</span>}</div><p>{mapDescription}</p></div>
               <div className="map-control">
-                <span className="map-scale-label">{showAllMunicipalities ? `${formatInteger(mapData?.features.length ?? 5571)} CIDADES` : selectedUF ? `${formatInteger(mapData?.features.length ?? 0)} MUNICÍPIOS` : '27 UFs · INCLUI DF'}</span>
+              <span className="map-scale-label">{selectedUF ? `${formatInteger(mapData?.features.length ?? 0)} MUNICÍPIOS` : `${formatInteger(mapData?.features.length ?? 5571)} CIDADES`}</span>
                 {!selectedUF && <label className="map-uf-select-label" htmlFor="map-uf-select">UF
                   <select id="map-uf-select" value="" onChange={(event) => {
                     const uf = event.target.value;
@@ -929,7 +905,7 @@ export default function App() {
                     {FEDERAL_UNITS.map((unit) => <option key={unit.uf} value={unit.uf}>{unit.uf}</option>)}
                   </select><ChevronDown size={12} aria-hidden="true" />
                 </label>}
-                <button type="button" className={`map-mode-toggle${showAllMunicipalities ? ' is-active' : ''}`} onClick={showCityMode} aria-pressed={showAllMunicipalities} title={showAllMunicipalities ? 'Voltar à visualização territorial' : selectedUF ? 'Ver resultados de todos os municípios desta UF' : 'Ver resultados de todos os municípios do Brasil'}><Layers3 size={14} /><span>{showAllMunicipalities ? 'Mapa por UF' : selectedUF ? 'Resultados municipais' : 'Todas as cidades'}</span></button>
+                <button type="button" className={`map-mode-toggle${showAllMunicipalities ? ' is-active' : ''}`} onClick={showCityMode} aria-pressed={showAllMunicipalities} title={showAllMunicipalities ? 'Voltar ao resumo da apuração' : selectedUF ? 'Abrir a lista de municípios desta UF' : 'Abrir a lista completa de resultados municipais'}><Layers3 size={14} /><span>{showAllMunicipalities ? 'Resumo eleitoral' : selectedUF ? 'Lista municipal' : 'Lista de cidades'}</span></button>
                 <button type="button" className={`live-toggle${realtimeActive ? ' is-active' : ''}`} onClick={toggleRealtime} aria-pressed={realtimeActive} title={realtimeTitle} disabled={realtimeDisabled}>
                   {isOfficialRealtime && liveUpdates ? <Radio size={14} /> : simulationVisible ? <Activity size={14} /> : <Play size={14} />}<span>{realtimeLabel}</span>{isOfficialRealtime && liveUpdates ? <i aria-hidden="true" /> : simulationVisible ? <Pause size={12} /> : null}
                 </button>
@@ -943,10 +919,10 @@ export default function App() {
                 <>
                 <BrazilMap
                   data={mapData}
-                  level={mapDataScope.selectedUF || mapDataScope.showAllMunicipalities ? 'municipality' : 'state'}
+                  level="municipality"
                   getKey={getFeatureKey}
                   getLabel={getFeatureLabel}
-                  voteShares={mapDataScope.selectedUF || mapDataScope.showAllMunicipalities ? municipalVoteShares : leaders}
+                  voteShares={municipalVoteShares}
                   unitBoundaries={unitBoundaries}
                   selectedUF={mapDataScope.selectedUF}
                   candidatePhotoRegion={officeCode === '1' ? 'BR' : null}
@@ -1007,7 +983,7 @@ export default function App() {
                   </>
                 )}
               </div>}
-              <div className="map-source"><Database size={13} /> MALHA: IBGE · 2025{(leadersLoading || municipalityProgress.isLoading) && <span className="loading-tiny"><LoaderCircle size={12} className="spin" /> {selectedUF && municipalityList.length ? `${formatInteger(municipalityProgress.completed)}/${formatInteger(municipalityList.length)}` : 'TSE'}</span>}</div>
+              <div className="map-source"><Database size={13} /> MALHA: IBGE · 2025{(leadersLoading || municipalityProgress.isLoading) && <span className="loading-tiny"><LoaderCircle size={12} className="spin" /> {municipalityProgress.isLoading ? `${formatInteger(municipalityProgress.completed)}/${formatInteger(municipalityScopeTotal)} cidades` : 'TSE'}</span>}</div>
             </div>
           </div>
 
