@@ -349,6 +349,9 @@ main { max-width: 1510px; margin: 0 auto; padding: 0 clamp(20px, 4vw, 66px) 44px
 .map-mode-toggle { min-height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 10px; border: 1px solid rgba(83, 224, 161, .25); border-radius: 4px; color: #b2c4b8; background: rgba(83, 224, 161, .045); font-family: var(--mono); font-size: 8px; letter-spacing: .035em; white-space: nowrap; cursor: pointer; transition: .18s ease; }
 .map-mode-toggle:hover, .map-mode-toggle.is-active { border-color: rgba(83, 224, 161, .62); background: rgba(83, 224, 161, .11); color: var(--mint); }
 .map-mode-toggle > svg { flex: none; }
+.map-reset-button { min-height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 4px; color: #b2c4b8; background: rgba(255, 255, 255, .025); font-family: var(--mono); font-size: 8px; letter-spacing: .035em; white-space: nowrap; cursor: pointer; transition: color .18s ease, border-color .18s ease, background .18s ease; }
+.map-reset-button:hover { border-color: rgba(83, 224, 161, .62); background: rgba(83, 224, 161, .08); color: var(--mint); }
+.map-reset-button > svg { flex: none; }
 .map-stage { min-height: 440px; }
 .map-viewport { position: relative; width: 100%; height: 100%; min-height: 420px; overflow: hidden; border-radius: 5px; background: radial-gradient(ellipse at 47% 51%, rgba(46, 87, 67, .17), transparent 66%); touch-action: none; overscroll-behavior: contain; }
 .brazil-map { display: block; width: 100%; height: 100%; max-height: none; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab; }
@@ -357,7 +360,6 @@ main { max-width: 1510px; margin: 0 auto; padding: 0 clamp(20px, 4vw, 66px) 44px
 .map-zoom-controls button { width: 40px; height: 40px; display: grid; place-items: center; border: 0; border-radius: 4px; background: transparent; color: #dce9e1; cursor: pointer; touch-action: manipulation; transition: background .15s ease, color .15s ease; }
 .map-zoom-controls button:hover:not(:disabled) { background: rgba(83, 224, 161, .13); color: var(--mint); }
 .map-zoom-controls button:disabled { color: #53685d; cursor: not-allowed; }
-.map-zoom-controls .map-zoom-reset { margin-top: 2px; border-top: 1px solid var(--line); border-radius: 0 0 4px 4px; color: #98b0a1; }
 .map-zoom-level { min-width: 37px; color: #82988c; font-family: var(--mono); font-size: 8px; text-align: center; font-variant-numeric: tabular-nums; }
 .map-feature-group { outline: none; }
 .map-feature { -webkit-tap-highlight-color: transparent; }
@@ -571,11 +573,6 @@ main { max-width: 1510px; margin: 0 auto; padding: 0 clamp(20px, 4vw, 66px) 44px
 .map-uf-select-label select { width: 77px; appearance: none; border: 0; padding: 8px 18px 8px 1px; outline: none; color: #e7f0eb; background: transparent; font-family: var(--mono); font-size: 9px; cursor: pointer; }
 .map-uf-select-label select option { color: #e7f0eb; background: #10231d; }
 .map-uf-select-label > svg { position: absolute; right: 7px; pointer-events: none; color: #9cb1a4; }
-.live-toggle { min-height: 34px; display: inline-flex; align-items: center; gap: 7px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 4px; color: #a6b7ad; background: transparent; font-family: var(--mono); font-size: 8px; letter-spacing: .035em; cursor: pointer; white-space: nowrap; transition: color .18s ease, border-color .18s ease, background .18s ease; }
-.live-toggle:hover, .live-toggle.is-active { border-color: rgba(83, 224, 161, .48); color: var(--mint); background: rgba(83, 224, 161, .055); }
-.live-toggle:disabled { cursor: not-allowed; opacity: .45; }
-.live-toggle > i { width: 6px; height: 6px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 8px rgba(83, 224, 161, .7); animation: live-pulse 1.6s infinite; }
-@keyframes live-pulse { 50% { opacity: .38; } }
 @media (max-width: 1050px) {
   .map-control { flex-wrap: wrap; justify-content: flex-end; }
 }
@@ -583,7 +580,6 @@ main { max-width: 1510px; margin: 0 auto; padding: 0 clamp(20px, 4vw, 66px) 44px
   .map-control { display: grid; grid-template-columns: 1fr auto auto; gap: 6px; }
   .map-scale-label { grid-column: 1 / -1; }
   .map-uf-select-label { min-height: 38px; }
-  .live-toggle { min-height: 38px; padding: 0 8px; }
   .map-uf-label rect { fill: rgba(8, 24, 18, .93); stroke: rgba(230, 249, 237, .8); }
   .map-uf-label text { font-size: 11px; }
 }

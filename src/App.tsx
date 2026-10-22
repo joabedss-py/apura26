@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, ArrowUpRight, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Database, ExternalLink, Info, Layers3, LoaderCircle, MapPin, Maximize2, Minimize2, Pause, Play, Radio, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Activity, ArrowUpRight, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Database, ExternalLink, Info, Layers3, LoaderCircle, LocateFixed, MapPin, Maximize2, Minimize2, RefreshCw, ShieldCheck } from 'lucide-react';
 import BrazilMap from './components/BrazilMap';
 import MunicipalityResultsPanel from './components/MunicipalityResultsPanel';
 import ElectionScopeControls from './components/ElectionScopeControls';
@@ -306,10 +306,11 @@ export default function App() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [municipalityRefreshKey, setMunicipalityRefreshKey] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
-  const [liveUpdates, setLiveUpdates] = useState(true);
+  const liveUpdates = true;
   const [simulationActive, setSimulationActive] = useState(false);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
   const [mapFullscreen, setMapFullscreen] = useState(false);
+  const [mapResetKey, setMapResetKey] = useState(0);
   const territoryRequestRef = useRef(0);
   const mapPanelRef = useRef<HTMLDivElement | null>(null);
 
@@ -803,38 +804,6 @@ export default function App() {
       return { ...entry, id: candidate?.id ?? entry.id, label: candidate ? formatCandidateLabel(candidate) : entry.label };
     })
     : legendCandidates.slice(0, 2).map(({ candidate }) => ({ id: candidate.id, label: formatCandidateLabel(candidate), color: getCandidateColor(candidate) }));
-  const realtimeActive = isOfficialRealtime ? liveUpdates : simulationVisible;
-  const realtimeDisabled = round === '2' && !roundTwoStarted;
-  const realtimeLabel = isOfficialRealtime
-    ? liveUpdates ? 'Ao vivo' : 'Retomar ao vivo'
-    : 'Ao vivo';
-  const realtimeTitle = realtimeDisabled
-    ? 'A demonstração usa os dados do 1º turno; selecione 1º turno. A apuração oficial do 2º turno começa em 25/10.'
-    : isOfficialRealtime
-      ? liveUpdates ? 'Pausar atualizações oficiais do TSE' : 'Retomar atualizações oficiais do TSE'
-      : simulationVisible
-        ? 'Encerrar a demonstração. Os resultados são oficiais, mas a sequência de chegada não é ao vivo.'
-        : 'Simular o carregamento progressivo dos resultados oficiais já publicados; nenhum voto será inventado.';
-  const toggleRealtime = () => {
-    if (realtimeDisabled) return;
-    if (isOfficialRealtime) {
-      setLiveUpdates((value) => !value);
-      return;
-    }
-    if (simulationVisible) {
-      territoryRequestRef.current += 1;
-      setSimulationActive(false);
-      setSelectedCandidateId(null);
-      setShowAllMunicipalities(false);
-      setSelectedMunicipality(null);
-      return;
-    }
-    territoryRequestRef.current += 1;
-    setSimulationActive(true);
-    setSelectedCandidateId(null);
-    setSelectedMunicipality(null);
-    setShowAllMunicipalities(true);
-  };
 
   return (
     <div className="app-shell">
@@ -906,8 +875,8 @@ export default function App() {
                   </select><ChevronDown size={12} aria-hidden="true" />
                 </label>}
                 <button type="button" className={`map-mode-toggle${showAllMunicipalities ? ' is-active' : ''}`} onClick={showCityMode} aria-pressed={showAllMunicipalities} title={showAllMunicipalities ? 'Voltar ao resumo da apuração' : selectedUF ? 'Abrir a lista de municípios desta UF' : 'Abrir a lista completa de resultados municipais'}><Layers3 size={14} /><span>{showAllMunicipalities ? 'Resumo eleitoral' : selectedUF ? 'Lista municipal' : 'Lista de cidades'}</span></button>
-                <button type="button" className={`live-toggle${realtimeActive ? ' is-active' : ''}`} onClick={toggleRealtime} aria-pressed={realtimeActive} title={realtimeTitle} disabled={realtimeDisabled}>
-                  {isOfficialRealtime && liveUpdates ? <Radio size={14} /> : simulationVisible ? <Activity size={14} /> : <Play size={14} />}<span>{realtimeLabel}</span>{isOfficialRealtime && liveUpdates ? <i aria-hidden="true" /> : simulationVisible ? <Pause size={12} /> : null}
+                <button type="button" className="map-reset-button" onClick={() => { setSelectedCandidateId(null); setMapResetKey((value) => value + 1); }} aria-label="Redefinir enquadramento do mapa" title="Afastar e centralizar o mapa">
+                  <LocateFixed size={14} /><span>Redefinir</span>
                 </button>
                 <button type="button" className="map-fullscreen-toggle" onClick={() => setMapFullscreen((value) => !value)} aria-label={mapFullscreen ? 'Sair da tela inteira' : 'Expandir mapa e apuração para tela inteira'} aria-pressed={mapFullscreen} title={mapFullscreen ? 'Sair da tela inteira (Esc)' : 'Expandir mapa e apuração para tela inteira'}>
                   {mapFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}<span>{mapFullscreen ? 'Fechar' : 'Tela inteira'}</span>
@@ -930,6 +899,7 @@ export default function App() {
                   selectedCandidate={focusedCandidate}
                   candidateFocusReady={candidateFocusReady}
                   suspended={mapStatus === 'loading'}
+                  resetViewKey={mapResetKey}
                   selectedKey={mapDataScope.selectedUF && selectedMunicipality?.uf === mapDataScope.selectedUF ? selectedMunicipality.ibgeCode : undefined}
                   onSelect={handleMapSelect}
                   onSelectUF={(uf) => {

@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { LocateFixed, Minus, Plus } from 'lucide-react';
+import { Minus, Plus } from 'lucide-react';
 import type { ElectionCandidate, FeatureCollection, GeoFeature, Position } from '../types';
 import { FEDERAL_UNITS, findUnitByCode } from '../data/states';
 import { getIbgeAreaCode } from '../services/ibge';
@@ -21,6 +21,7 @@ interface BrazilMapProps {
   selectedCandidate?: ElectionCandidate | null;
   candidateFocusReady?: boolean;
   suspended?: boolean;
+  resetViewKey?: number;
   selectedKey?: string;
   onSelect: (feature: GeoFeature) => void;
   onSelectUF?: (uf: string) => void;
@@ -76,7 +77,7 @@ interface MunicipalityHoverCardState {
 const WIDTH = 860;
 const HEIGHT = 560;
 const voteFormatter = new Intl.NumberFormat('pt-BR');
-const MIN_ZOOM = 1;
+const MIN_ZOOM = 0.65;
 const MAX_ZOOM = 32;
 const STATE_FOCUS_MAX_SCALE = 3.24;
 const UF_LABEL_OFFSETS: Record<string, readonly [number, number]> = {
@@ -194,12 +195,16 @@ function clientToMapPoint(svg: SVGSVGElement, clientX: number, clientY: number):
 
 function clampTransform(value: ViewTransform): ViewTransform {
   const scale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value.scale));
-  const maxX = WIDTH * (scale - 1);
-  const maxY = HEIGHT * (scale - 1);
+  const offsetX = WIDTH * (1 - scale);
+  const offsetY = HEIGHT * (1 - scale);
+  const minX = Math.min(0, offsetX);
+  const maxX = Math.max(0, offsetX);
+  const minY = Math.min(0, offsetY);
+  const maxY = Math.max(0, offsetY);
   return {
     scale,
-    tx: Math.min(0, Math.max(-maxX, value.tx)),
-    ty: Math.min(0, Math.max(-maxY, value.ty)),
+    tx: Math.min(maxX, Math.max(minX, value.tx)),
+    ty: Math.min(maxY, Math.max(minY, value.ty)),
   };
 }
 
@@ -313,7 +318,7 @@ const MapFeature = memo(function MapFeature({
   );
 });
 
-export default function BrazilMap({ data, level, getKey, getLabel, voteShares, unitBoundaries, selectedUF, candidatePhotoRegion, selectedCandidateId, selectedCandidate, candidateFocusReady = true, suspended = false, selectedKey, onSelect, onSelectUF }: BrazilMapProps) {
+export default function BrazilMap({ data, level, getKey, getLabel, voteShares, unitBoundaries, selectedUF, candidatePhotoRegion, selectedCandidateId, selectedCandidate, candidateFocusReady = true, suspended = false, resetViewKey = 0, selectedKey, onSelect, onSelectUF }: BrazilMapProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const viewGroupRef = useRef<SVGGElement | null>(null);
   const viewAnimationRef = useRef<number | null>(null);
@@ -498,6 +503,12 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
     autoFocusScopeRef.current = territoryFocusScope;
     focusTerritory();
   }, [data, level, selectedUF, selectedKey, selectedCandidateId, selectedCandidate, candidateFocusReady, suspended, features, projectedUnits, unitBoundaries, voteShares, updateView]);
+
+  useEffect(() => {
+    if (!resetViewKey) return;
+    autoFocusScopeRef.current = `${[level, selectedUF ?? '', selectedKey ?? ''].join('|')}|territory`;
+    updateView({ scale: 1, tx: 0, ty: 0 });
+  }, [resetViewKey, updateView]);
 
   const zoomAt = useCallback((anchor: MapPoint, factor: number) => {
     const current = viewRef.current;
@@ -703,7 +714,6 @@ export default function BrazilMap({ data, level, getKey, getLabel, voteShares, u
         <button ref={zoomInButtonRef} type="button" aria-label="Aproximar mapa" title="Aproximar" onClick={() => zoomAtCenter(1.35)} disabled={renderedView.scale >= MAX_ZOOM}><Plus size={17} /></button>
         <span ref={zoomLevelRef} className="map-zoom-level" aria-live="off">{Math.round(renderedView.scale * 100)}%</span>
         <button ref={zoomOutButtonRef} type="button" aria-label="Afastar mapa" title="Afastar" onClick={() => zoomAtCenter(1 / 1.35)} disabled={renderedView.scale <= MIN_ZOOM}><Minus size={17} /></button>
-        <button type="button" className="map-zoom-reset" aria-label="Restaurar enquadramento do mapa" title="Restaurar enquadramento" onClick={() => updateView({ scale: 1, tx: 0, ty: 0 })}><LocateFixed size={16} /></button>
       </div>
     </div>
   );
